@@ -31,7 +31,7 @@ cfgr = None
 
 def classify(dev_id=None):
     # Prepare model related meta data
-    mdl_name = opts.model.split('_')[0].lower().replace(' ', '_')
+    mdl_name = opts.model.lower().replace(' ', '_')
     common_cfg = cfgr('validate', 'common')
     pr = io.param_reader(os.path.join(FILE_DIR, 'etc', '%s.yaml' % common_cfg.setdefault('mdl_cfg', 'mdlcfg')))
     config_kwargs = dict([(k, v) for k, v in opts.__dict__.items() if not k.startswith('_') and k not in set(['dataset', 'model', 'template']) and v is not None and not callable(v)])

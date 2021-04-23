@@ -1,4 +1,6 @@
-import copy
+import os, sys, copy
+
+import pandas as pd
 
 import torch
 from torch import nn
@@ -7,17 +9,15 @@ import torch.nn.functional as F
 from allennlp.modules.conditional_random_field import ConditionalRandomField
 
 from transformers.modeling_bert import BertPreTrainingHeads
-from transformers import GPT2LMHeadModel
 
 from . import common as M
-from . import config as C
 from . import reduction as R
 
 
 class BaseClfHead(nn.Module):
     """ Classifier Head for the Basic Language Model """
 
-    def __init__(self, lm_model, config, task_type, sample_weights=False, num_lbs=1, mlt_trnsfmr=False, lm_loss=False, pdrop=0.2, do_norm=True, do_extlin=False, do_lastdrop=True, do_crf=False, do_thrshld=False, constraints=[], task_params={}, binlb={}, binlbr={}, **kwargs):
+    def __init__(self, lm_model, lm_config, config, task_type, sample_weights=False, num_lbs=1, mlt_trnsfmr=False, lm_loss=False, pdrop=0.2, do_norm=True, do_extlin=False, do_lastdrop=True, do_crf=False, do_thrshld=False, constraints=[], task_params={}, binlb={}, binlbr={}, **kwargs):
         super(BaseClfHead, self).__init__()
         self.task_params = task_params
         self.lm_model = lm_model
@@ -135,6 +135,7 @@ class BaseClfHead(nn.Module):
             loss_func = nn.BCEWithLogitsLoss(pos_weight=10*weights if weights is not None else None, reduction='none')
             clf_loss = loss_func(clf_logits.view(-1, self.num_lbs), labels.view(-1, self.num_lbs).float())
         elif self.task_type == 'sentsim':
+            from . import config as C
             # print((clf_logits.size(), labels.size()))
             loss_cls = C.RGRSN_LOSS_MAP[self.task_params.setdefault('loss', 'contrastive' if self.task_params.setdefault('sentsim_func', None) and self.task_params['sentsim_func'] != 'concat' else 'mse')]
             loss_func = loss_cls(reduction='none', x_mode=C.SIM_FUNC_MAP.setdefault(self.task_params['sentsim_func'], 'dist'), y_mode=self.task_params.setdefault('ymode', 'sim')) if self.task_params.setdefault('sentsim_func', None) and self.task_params['sentsim_func'] != 'concat' else (loss_cls(reduction='none', x_mode='sim', y_mode=self.task_params.setdefault('ymode', 'sim')) if self.task_params['sentsim_func'] == 'concat' else nn.MSELoss(reduction='none'))
@@ -283,12 +284,13 @@ class BaseClfHead(nn.Module):
 
 
 class BERTClfHead(BaseClfHead):
-    def __init__(self, lm_model, config, task_type, iactvtn='relu', oactvtn='sigmoid', fchdim=0, sample_weights=False, num_lbs=1, mlt_trnsfmr=False, lm_loss=False, pdrop=0.2, do_norm=True, norm_type='batch', do_lastdrop=True, do_crf=False, do_thrshld=False, constraints=[], initln=False, initln_mean=0., initln_std=0.02, task_params={}, output_layer=-1, pooler=None, layer_pooler='avg', **kwargs):
-        super(BERTClfHead, self).__init__(lm_model, config, task_type, sample_weights=sample_weights, num_lbs=num_lbs, mlt_trnsfmr=task_type in ['entlmnt', 'sentsim'] and task_params.setdefault('sentsim_func', None) is not None, lm_loss=lm_loss, pdrop=pdrop, do_norm=do_norm, do_lastdrop=do_lastdrop, do_crf=do_crf, do_thrshld=do_thrshld, last_hdim=config.hidden_size, constraints=constraints, task_params=task_params, **kwargs)
+    def __init__(self, lm_model, lm_config, config, task_type, iactvtn='relu', oactvtn='sigmoid', fchdim=0, sample_weights=False, num_lbs=1, mlt_trnsfmr=False, lm_loss=False, pdrop=0.2, do_norm=True, norm_type='batch', do_lastdrop=True, do_crf=False, do_thrshld=False, constraints=[], initln=False, initln_mean=0., initln_std=0.02, task_params={}, output_layer=-1, pooler=None, layer_pooler='avg', **kwargs):
+        from . import config as C
+        super(BERTClfHead, self).__init__(lm_model, lm_config, config, task_type, sample_weights=sample_weights, num_lbs=num_lbs, mlt_trnsfmr=task_type in ['entlmnt', 'sentsim'] and task_params.setdefault('sentsim_func', None) is not None, lm_loss=lm_loss, pdrop=pdrop, do_norm=do_norm, do_lastdrop=do_lastdrop, do_crf=do_crf, do_thrshld=do_thrshld, last_hdim=lm_config.hidden_size, constraints=constraints, task_params=task_params, **kwargs)
         self.lm_head = BertPreTrainingHeads(config)
-        self.vocab_size = config.vocab_size
-        self.num_hidden_layers = config.num_hidden_layers
-        self.n_embd = kwargs.setdefault('n_embd', config.hidden_size)
+        self.vocab_size = lm_config.vocab_size
+        self.num_hidden_layers = lm_config.num_hidden_layers
+        self.n_embd = kwargs.setdefault('n_embd', lm_config.hidden_size)
         self.maxlen = self.task_params.setdefault('maxlen', 128)
         self.norm = C.NORM_TYPE_MAP[norm_type](self.maxlen) if self.task_type == 'nmt' else C.NORM_TYPE_MAP[norm_type](self.n_embd)
         self._int_actvtn = C.ACTVTN_MAP[iactvtn]
@@ -306,8 +308,7 @@ class BERTClfHead(BaseClfHead):
         else:
             self.output_layer = [x for x in output_layer if (x >= -self.num_hidden_layers and x < self.num_hidden_layers)]
             self.layer_pooler = R.TransformerLayerMaxPool(kernel_size=len(self.output_layer)) if layer_pooler == 'max' else R.TransformerLayerAvgPool(kernel_size=len(self.output_layer))
-        if pooler is not None:
-            self.pooler = R.MaskedReduction(reduction=pooler, dim=1)
+        self.pooler = R.MaskedReduction(reduction=pooler, dim=1)
 
     def __init_linear__(self):
         use_gpu = next(self.parameters()).is_cuda
@@ -348,18 +349,24 @@ class OntoBERTClfHead(BERTClfHead):
             for k, v in config.items():
                 if hasattr(self.module, k): setattr(self.module, k, v)
 
-    def __init__(self, lm_model, config, task_type, onto='onto.csv', embeddim=128, onto_fchdim=128, iactvtn='relu', oactvtn='sigmoid', fchdim=0, sample_weights=False, num_lbs=1, mlt_trnsfmr=False, lm_loss=False, pdrop=0.2, do_norm=True, norm_type='batch', do_lastdrop=True, do_crf=False, do_thrshld=False, constraints=[], initln=False, initln_mean=0., initln_std=0.02, task_params={}, output_layer=-1, pooler=None, layer_pooler='avg', **kwargs):
-        config.output_hidden_states = True
-        output_layer = list(range(config.num_hidden_layers))
-        BERTClfHead.__init__(self, lm_model, config, task_type, iactvtn=iactvtn, oactvtn=oactvtn, fchdim=fchdim, sample_weights=sample_weights, num_lbs=num_lbs, mlt_trnsfmr=task_type in ['entlmnt', 'sentsim'] and task_params.setdefault('sentsim_func', None) is not None, lm_loss=lm_loss, pdrop=pdrop, do_norm=do_norm, norm_type=norm_type, do_lastdrop=do_lastdrop, do_crf=do_crf, do_thrshld=do_thrshld, constraints=constraints, initln=initln, initln_mean=initln_mean, initln_std=initln_std, task_params=task_params, output_layer=output_layer, pooler=pooler, layer_pooler=layer_pooler, n_embd=config.hidden_size+int(config.hidden_size/config.num_attention_heads), **kwargs)
-        self.num_attention_heads = config.num_attention_heads
-        self.onto = pd.read_csv(onto, sep=kwargs.setdefault('sep', '\t'), index_col='id')
+    def __init__(self, lm_model, lm_config, config, task_type, embeddim=128, onto_fchdim=128, iactvtn='relu', oactvtn='sigmoid', fchdim=0, sample_weights=False, num_lbs=1, mlt_trnsfmr=False, lm_loss=False, pdrop=0.2, do_norm=True, norm_type='batch', do_lastdrop=True, do_crf=False, do_thrshld=False, constraints=[], initln=False, initln_mean=0., initln_std=0.02, task_params={}, output_layer=-1, pooler=None, layer_pooler='avg', **kwargs):
+        lm_config.output_hidden_states = True
+        output_layer = list(range(lm_config.num_hidden_layers))
+        BERTClfHead.__init__(self, lm_model, lm_config, config, task_type, iactvtn=iactvtn, oactvtn=oactvtn, fchdim=fchdim, sample_weights=sample_weights, num_lbs=num_lbs, mlt_trnsfmr=task_type in ['entlmnt', 'sentsim'] and task_params.setdefault('sentsim_func', None) is not None, lm_loss=lm_loss, pdrop=pdrop, do_norm=do_norm, norm_type=norm_type, do_lastdrop=do_lastdrop, do_crf=do_crf, do_thrshld=do_thrshld, constraints=constraints, initln=initln, initln_mean=initln_mean, initln_std=initln_std, task_params=task_params, output_layer=output_layer, pooler=pooler, layer_pooler=layer_pooler, n_embd=lm_config.hidden_size+int(lm_config.hidden_size/lm_config.num_attention_heads), **kwargs)
+        self.num_attention_heads = lm_config.num_attention_heads
+        if hasattr(config, 'onto_df') and type(config.onto_df) is pd.DataFrame:
+            self.onto = config.onto_df
+        else:
+            onto_fpath = config.onto if hasattr(config, 'onto') and os.path.exists(config.onto) else 'onto.csv'
+            print('Reading ontology dictionary file [%s]...' % onto_fpath)
+            self.onto = pd.read_csv(onto_fpath, sep=kwargs.setdefault('sep', '\t'), index_col='id')
+            setattr(config, 'onto_df', self.onto)
         self.embeddim = embeddim
         self.embedding = nn.Embedding(self.onto.shape[0]+1, embeddim)
         self.onto_fchdim = onto_fchdim
-        self.onto_linear = nn.Sequential(nn.Linear(embeddim, onto_fchdim), self._int_actvtn(), nn.Linear(onto_fchdim, onto_fchdim), self._int_actvtn(), nn.Linear(onto_fchdim, config.num_hidden_layers + config.num_attention_heads), self._out_actvtn())
-        if (initln): self.onto_linear.apply(_weights_init(mean=initln_mean, std=initln_std))
-        self.halflen = config.num_hidden_layers
+        self.onto_linear = nn.Sequential(nn.Linear(embeddim, onto_fchdim), self._int_actvtn(), nn.Linear(onto_fchdim, onto_fchdim), self._int_actvtn(), nn.Linear(onto_fchdim, lm_config.num_hidden_layers + lm_config.num_attention_heads), self._out_actvtn())
+        if (initln): self.onto_linear.apply(M._weights_init(mean=initln_mean, std=initln_std))
+        self.halflen = lm_config.num_hidden_layers
         if (type(output_layer) is not int):
             self.output_layer = [x for x in output_layer if (x >= -self.num_hidden_layers and x < self.num_hidden_layers)]
             self.layer_pooler = R.TransformerLayerWeightedReduce(reduction=layer_pooler)
@@ -426,7 +433,7 @@ class OntoBERTClfHead(BERTClfHead):
         use_gpu = next(self.parameters()).is_cuda
         segment_ids = extra_inputs[4] if self.sample_weights else extra_inputs[3]
         root = OntoBERTClfHead._PyTorchModuleVertex.from_dict({'module':self.lm_model})
-        OntoBERTClfHead.M.stack_dfs(root, 'modify_config', shared_data={'config':{'output_attentions':True, 'output_hidden_states':True}})
+        M.stack_dfs(root, 'modify_config', shared_data={'config':{'output_attentions':True, 'output_hidden_states':True}})
         last_hidden_state, pooled_output, all_encoder_layers, all_attentions = self.lm_model.forward(input_ids=input_ids, token_type_ids=segment_ids, attention_mask=pool_idx)
         all_attentions = torch.cat([att.unsqueeze(0) for att in all_attentions], dim=0)
         return all_encoder_layers[self.output_layer] if type(self.output_layer) is int else [all_encoder_layers[x] for x in self.output_layer], pooled_output, all_attentions

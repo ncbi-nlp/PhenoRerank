@@ -4,8 +4,6 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from . import config as C
-
 
 class TransformerLayerMaxPool(nn.MaxPool1d):
     def forward(self, hidden_states):
@@ -92,6 +90,7 @@ class MaskedReduction(nn.Module):
 
 class ThresholdEstimator(nn.Module):
     def __init__(self, last_hdim, fchdim=100, iactvtn='relu', oactvtn='sigmoid', init_thrshld=0.5):
+        from . import config as C
         super(ThresholdEstimator, self).__init__()
         self.thrshld = init_thrshld
         self.linear = nn.Sequential(nn.Linear(last_hdim, fchdim), C.ACTVTN_MAP[iactvtn](), nn.Linear(fchdim, fchdim), C.ACTVTN_MAP[iactvtn](), nn.Linear(fchdim, 1), C.ACTVTN_MAP[oactvtn]()) if fchdim else nn.Sequential(nn.Linear(last_hdim, 1), C.ACTVTN_MAP[oactvtn]())

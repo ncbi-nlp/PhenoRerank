@@ -259,7 +259,13 @@ class MaskedLMDataset(BaseDataset):
 class OntoDataset(BaseDataset):
     def __init__(self, csv_file, text_col, label_col, encode_func, tokenizer, config, onto_fpath='onto.csv', onto_col='ontoid', sep='\t', index_col='id', binlb=None, transforms=[], transforms_args={}, transforms_kwargs=[], sampw=False, sampfrac=None, **kwargs):
         super(OntoDataset, self).__init__(csv_file, text_col, label_col, encode_func, tokenizer, config, sep=sep, index_col=index_col, binlb=binlb, transforms=transforms, transforms_args=transforms_args, transforms_kwargs=transforms_kwargs, sampw=sampw, sampfrac=sampfrac, **kwargs)
-        self.onto = pd.read_csv(onto_fpath, sep=sep, index_col=index_col)
+        if hasattr(config, 'onto_df') and type(config.onto_df) is pd.DataFrame:
+            self.onto = config.onto_df
+        else:
+            onto_fpath = config.onto if hasattr(config, 'onto') and os.path.exists(config.onto) else 'onto.csv'
+            print('Reading ontology dictionary file [%s]...' % onto_fpath)
+            self.onto = pd.read_csv(onto_fpath, sep=sep, index_col=index_col)
+            setattr(config, 'onto_df', self.onto)
         print('Ontology DataFrame size: %s' % str(self.onto.shape))
         self.onto2id = dict([(k, i+1) for i, k in enumerate(self.onto.index)])
         self.onto_col = onto_col

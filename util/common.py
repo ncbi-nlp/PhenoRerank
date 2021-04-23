@@ -11,7 +11,6 @@ from torch import nn
 from allennlp.modules.seq2vec_encoders import PytorchSeq2VecWrapper
 from allennlp.modules.seq2seq_encoders import PytorchSeq2SeqWrapper
 
-from . import config as C
 from .dataset import DataParallel
 
 
@@ -219,6 +218,7 @@ def cfg_reader(fpath):
 
 
 def gen_pytorch_wrapper(mdl_type, mdl_name, **kwargs):
+    from . import config as C
     wrapper_cls = PytorchSeq2SeqWrapper if mdl_type == 'seq2seq' else PytorchSeq2VecWrapper
     mdl_cls = C.PYTORCH_WRAPPER[mdl_name]
     return wrapper_cls(module=mdl_cls(**kwargs))
@@ -248,7 +248,7 @@ def gen_mdl(mdl_name, config, pretrained=True, use_gpu=False, distrb=False, dev_
             params = pr('LM', config.lm_params)
             for pname in ['pretrained_mdl_path', 'pretrained_vocab_path']:
                 if pname in params: del params[pname]
-            lm_config = config.config(**params)
+            lm_config = config.lm_config(**params)
             if (mdl_name == 'elmo'):
                 pos_params = [lm_config[k] for k in ['options_file','weight_file', 'num_output_representations']]
                 kw_params = dict([(k, lm_config[k]) for k in lm_config.keys() if k not in ['options_file','weight_file', 'num_output_representations', 'elmoedim']])
@@ -273,17 +273,8 @@ def gen_clf(mdl_name, config, encoder='pool', constraints=[], use_gpu=False, dis
     params = pr('LM', config.lm_params) if lm_mdl_name != 'none' else {}
     for pname in ['pretrained_mdl_path', 'pretrained_vocab_path']:
         if pname in params: del params[pname]
-    kwargs['config'] = config.config(**params) if lm_mdl_name != 'none' else {}
-
-    lvar = locals()
-    for x in constraints:
-        cnstrnt_cls, cnstrnt_params = copy.deepcopy(C.CNSTRNTS_MAP[x])
-        constraint_params = pr('Constraint', C.CNSTRNT_PARAMS_MAP[x])
-        cnstrnt_params.update(dict([((k, p), constraint_params[p]) for k, p in cnstrnt_params.keys() if p in constraint_params]))
-        cnstrnt_params.update(dict([((k, p), kwargs[p]) for k, p in cnstrnt_params.keys() if p in kwargs]))
-        cnstrnt_params.update(dict([((k, p), lvar[p]) for k, p in cnstrnt_params.keys() if p in lvar]))
-        kwargs.setdefault('constraints', []).append((cnstrnt_cls, dict([(k, v) for (k, p), v in cnstrnt_params.items()])))
-
+    kwargs['lm_config'] = config.lm_config(**params) if lm_mdl_name != 'none' else {}
+    kwargs['config'] = config
     clf = config.clf[encoder](**kwargs) if hasattr(config, 'embed_type') and config.embed_type else config.clf(**kwargs)
     if use_gpu: clf = _handle_model(clf, dev_id=dev_id, distrb=distrb)
     return clf

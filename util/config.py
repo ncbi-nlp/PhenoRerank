@@ -8,7 +8,7 @@ from torch import nn
 
 from transformers import BertConfig, BertTokenizer, BertModel, AdamW
 
-from .dataset import BaseDataset, SentSimDataset, EntlmntDataset
+from .dataset import BaseDataset, SentSimDataset, EntlmntDataset, OntoDataset
 from . import modules as M
 from . import processor as P
 
@@ -31,7 +31,8 @@ class Configurable(object):
     PREDEFINED_TASK_CONFIG_KEYS = ['template', 'task_path', 'kwargs']
     PREDEFINED_TASK_CONFIG_VALUES = {
         'biolarkgsc': ['mltl-base', 'biolarkgsc', {}],
-		'biolarkgsc_entilement': ['entlmnt-base', 'biolarkgsc.entlmnt', {'task_col':{'index':'id', 'X':['text1', 'text2'], 'y':'label', 'ontoid':'label2'}}],
+        'biolarkgsc_entilement': ['entlmnt-base', 'biolarkgsc.entlmnt', {'task_ds':OntoDataset, 'task_col':{'index':'id', 'X':['text1', 'onto'], 'y':'label', 'ontoid':'label2'}}],
+        'hpo_entilement': ['entlmnt-base', 'hpo.entlmnt', {'task_ds':OntoDataset, 'task_col':{'index':'id', 'X':['text1', 'onto'], 'y':'label', 'ontoid':'label2'}}]
     }
     # Model related parameters
     MODEL_CONFIG_TEMPLATE_KEYS = ['encode_func', 'clf_ext_params', 'optmzr']
@@ -39,9 +40,10 @@ class Configurable(object):
         'transformer-base': [P._base_encode, {'lm_loss':False, 'fchdim':0, 'iactvtn':'relu', 'oactvtn':'sigmoid', 'pdrop':0.2, 'do_norm':True, 'norm_type':'batch', 'do_extlin':False, 'do_lastdrop':True, 'do_crf':False, 'initln':False, 'initln_mean':0., 'initln_std':0.02, 'sample_weights':False}, (AdamW, {'correct_bias':False}, 'linwarm')],
     }
     MODEL_CONFIG_TEMPLATE_DEFAULTS = MODEL_CONFIG_TEMPLATE_VALUES['transformer-base']
-    PREDEFINED_MODEL_CONFIG_KEYS = ['template', 'lm_mdl_name', 'lm_model', 'lm_params', 'clf', 'config', 'tknzr', 'lm_tknz_extra_char', 'kwargs']
+    PREDEFINED_MODEL_CONFIG_KEYS = ['template', 'lm_mdl_name', 'lm_model', 'lm_config', 'lm_params', 'clf', 'tknzr', 'lm_tknz_extra_char', 'kwargs']
     PREDEFINED_MODEL_CONFIG_VALUES = {
-        'bert': ['transformer-base', 'bert-base-uncased', BertModel, 'BERT', M.BERTClfHead, BertConfig, BertTokenizer, ['[CLS]', '[SEP]', '[SEP]', '[MASK]'], {}],
+        'bert': ['transformer-base', 'bert-base-uncased', BertModel, BertConfig, 'BERT', M.BERTClfHead, BertTokenizer, ['[CLS]', '[SEP]', '[SEP]', '[MASK]'], {}],
+        'bert_onto': ['transformer-base', 'bert-base-uncased', BertModel, BertConfig, 'BERT', M.OntoBERTClfHead, BertTokenizer, ['[CLS]', '[SEP]', '[SEP]', '[MASK]'], {}],
     }
     # Common parameters
     TEMPLATE_VALUES_TYPE_MAP = {'task':TASK_CONFIG_TEMPLATE_VALUES, 'model':MODEL_CONFIG_TEMPLATE_VALUES}
