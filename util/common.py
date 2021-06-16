@@ -1,7 +1,8 @@
-import os, io, re, sys, yaml, copy, codecs, itertools, signal
+import os, io, re, sys, json, yaml, copy, codecs, itertools, signal, logging
 
 from abc import ABC, abstractmethod
 
+import numpy as np
 import scipy as sp
 from scipy.sparse import csc_matrix
 
@@ -67,38 +68,6 @@ class GracefulKiller:
         self.kill_now = True
 
 
-class DFSVertex(object):
-    def __init__(self):
-        self.is_visited = False
-
-    @classmethod
-    def from_dict(cls, dict_data):
-        obj = cls()
-        for k, v in dict_data.items():
-            setattr(obj, k, v)
-        return obj
-
-    @property
-    @abstractmethod
-    def children(self):
-        pass
-
-
-def stack_dfs(root_vertices, proc_func, shared_data={}):
-    stack = list(root_vertices) if hasattr(root_vertices, '__iter__') else [root_vertices]
-    while len(stack) > 0:
-        cur_entry = stack[-1]
-        if not cur_entry.is_visited:
-            if len(cur_entry.children) > 0: stack.extend(list(cur_entry.children)[::-1])
-            cur_entry.is_visited = True
-        else:
-            if type(proc_func) is str:
-                getattr(cur_entry, proc_func)(shared_data)
-            else:
-                proc_func(cur_entry, shared_data)
-            del stack[-1]
-
-
 def mkdir(path):
 	if path and not os.path.exists(path):
 		print(("Creating folder: " + path))
@@ -144,6 +113,12 @@ def write_file(content, fpath, code='ascii'):
 		sys.exit(-1)
 
 
+def read_json(fpath):
+	with open(fpath) as fd:
+		res = json.load(fd)
+	return res
+
+
 def write_df(df, fpath, with_col=True, with_idx=False, sparse_fmt=None, compress=False):
 	fs.mkdir(os.path.dirname(fpath))
 	fpath = os.path.splitext(fpath)[0] + '.npz'
@@ -162,7 +137,6 @@ def write_df(df, fpath, with_col=True, with_idx=False, sparse_fmt=None, compress
 
 
 def write_yaml(data, fpath, append=False, dfs=False):
-#	fs.mkdir(os.path.dirname(fpath))
 	fpath = os.path.splitext(fpath)[0] + '.yaml'
 	with open(fpath, 'a' if append else 'w') as f:
 		yaml.dump(data, f, default_flow_style=dfs)
@@ -224,64 +198,71 @@ def gen_pytorch_wrapper(mdl_type, mdl_name, **kwargs):
     return wrapper_cls(module=mdl_cls(**kwargs))
 
 
-def gen_mdl(mdl_name, config, pretrained=True, use_gpu=False, distrb=False, dev_id=None):
-    if mdl_name == 'none': return None
+def gen_mdl(config, use_gpu=False, distrb=False, dev_id=None):
+    mdl_name, pretrained = config.model, True if type(config.pretrained) is str and config.pretrained.lower() == 'true' else config.pretrained
+    if mdl_name == 'none': return None, None
     wsdir = config.wsdir if hasattr(config, 'wsdir') and os.path.isdir(config.wsdir) else '.'
+    common_cfg = config.common_cfg if hasattr(config, 'common_cfg') else {}
+    pr = param_reader(os.path.join(wsdir, 'etc', '%s.yaml' % common_cfg.setdefault('mdl_cfg', 'mdlcfg')))
+    params = pr('LM', config.lm_params)
+    lm_config = config.lm_config(**params)
     if distrb: import horovod.torch as hvd
     if (type(pretrained) is str):
-        if (not distrb or distrb and hvd.rank() == 0): print('Using pretrained model from `%s`' % pretrained)
+        if (not distrb or distrb and hvd.rank() == 0): logging.info('Using pretrained model from `%s`' % pretrained)
         checkpoint = torch.load(pretrained, map_location='cpu')
         model = checkpoint['model']
         model.load_state_dict(checkpoint['state_dict'])
     elif (pretrained):
-        if (not distrb or distrb and hvd.rank() == 0): print('Using pretrained model...')
+        if (not distrb or distrb and hvd.rank() == 0): logging.info('Using pretrained model...')
         mdl_name = mdl_name.split('_')[0]
-        common_cfg = config.common_cfg if hasattr(config, 'common_cfg') else {}
-        pr = param_reader(os.path.join(wsdir, 'etc', '%s.yaml' % common_cfg.setdefault('mdl_cfg', 'mdlcfg')))
-        params = pr('LM', config.lm_params)
         model = config.lm_model.from_pretrained(params['pretrained_mdl_path'] if 'pretrained_mdl_path' in params else config.lm_mdl_name)
     else:
-        if (not distrb or distrb and hvd.rank() == 0): print('Using untrained model...')
+        if (not distrb or distrb and hvd.rank() == 0): logging.info('Using untrained model...')
         try:
-            common_cfg = config.common_cfg if hasattr(config, 'common_cfg') else {}
-            pr = param_reader(os.path.join(wsdir, 'etc', '%s.yaml' % common_cfg.setdefault('mdl_cfg', 'mdlcfg')))
-            params = pr('LM', config.lm_params)
             for pname in ['pretrained_mdl_path', 'pretrained_vocab_path']:
                 if pname in params: del params[pname]
-            lm_config = config.lm_config(**params)
             if (mdl_name == 'elmo'):
                 pos_params = [lm_config[k] for k in ['options_file','weight_file', 'num_output_representations']]
                 kw_params = dict([(k, lm_config[k]) for k in lm_config.keys() if k not in ['options_file','weight_file', 'num_output_representations', 'elmoedim']])
-                print('ELMo model parameters: %s %s' % (pos_params, kw_params))
+                logging.info('ELMo model parameters: %s %s' % (pos_params, kw_params))
                 model = config.lm_model(*pos_params, **kw_params)
             else:
                 model = config.lm_model(lm_config)
         except Exception as e:
-            print(e)
-            print('Cannot find the pretrained model file, using online model instead.')
+            logging.warning(e)
+            logging.warning('Cannot find the pretrained model file, using online model instead.')
             model = config.lm_model.from_pretrained(config.lm_mdl_name)
     if (use_gpu): model = model.to('cuda')
-    return model
+    return model, lm_config
 
 
-def gen_clf(mdl_name, config, encoder='pool', constraints=[], use_gpu=False, distrb=False, dev_id=None, **kwargs):
+def gen_clf(config, lm_model, lm_config, use_gpu=False, distrb=False, dev_id=None, **kwargs):
+    mdl_name, constraints = config.model, config.cnstrnts.split(',') if hasattr(config, 'cnstrnts') and config.cnstrnts else []
     lm_mdl_name = mdl_name.split('_')[0]
-    kwargs['lm_mdl_name'] = lm_mdl_name
+    kwargs.update(dict(config=config, lm_model=lm_model, lm_config=lm_config))
     common_cfg = config.common_cfg if hasattr(config, 'common_cfg') else {}
     wsdir = config.wsdir if hasattr(config, 'wsdir') and os.path.isdir(config.wsdir) else '.'
     pr = param_reader(os.path.join(wsdir, 'etc', '%s.yaml' % common_cfg.setdefault('mdl_cfg', 'mdlcfg')))
     params = pr('LM', config.lm_params) if lm_mdl_name != 'none' else {}
     for pname in ['pretrained_mdl_path', 'pretrained_vocab_path']:
         if pname in params: del params[pname]
-    kwargs['lm_config'] = config.lm_config(**params) if lm_mdl_name != 'none' else {}
-    kwargs['config'] = config
-    clf = config.clf[encoder](**kwargs) if hasattr(config, 'embed_type') and config.embed_type else config.clf(**kwargs)
+
+    lvar = locals()
+    for x in constraints:
+        cnstrnt_cls, cnstrnt_params = copy.deepcopy(C.CNSTRNTS_MAP[x])
+        constraint_params = pr('Constraint', C.CNSTRNT_PARAMS_MAP[x])
+        cnstrnt_params.update(dict([((k, p), constraint_params[p]) for k, p in cnstrnt_params.keys() if p in constraint_params]))
+        cnstrnt_params.update(dict([((k, p), kwargs[p]) for k, p in cnstrnt_params.keys() if p in kwargs]))
+        cnstrnt_params.update(dict([((k, p), lvar[p]) for k, p in cnstrnt_params.keys() if p in lvar]))
+        kwargs.setdefault('constraints', []).append((cnstrnt_cls, dict([(k, v) for (k, p), v in cnstrnt_params.items()])))
+
+    clf = config.clf[config.encoder](**kwargs) if hasattr(config, 'embed_type') and config.embed_type else config.clf(**kwargs)
     if use_gpu: clf = _handle_model(clf, dev_id=dev_id, distrb=distrb)
     return clf
 
 
 def save_model(model, optimizer, fpath='checkpoint.pth', in_wrapper=False, devq=None, distrb=False, **kwargs):
-    print('Saving trained model...')
+    logging.info('Saving trained model...')
     use_gpu, multi_gpu = (devq and len(devq) > 0), (devq and len(devq) > 1)
     if not distrb and (in_wrapper or multi_gpu): model = model.module
     model = model.cpu() if use_gpu else model
@@ -292,7 +273,7 @@ def save_model(model, optimizer, fpath='checkpoint.pth', in_wrapper=False, devq=
 
 
 def load_model(mdl_path):
-    print('Loading previously trained model...')
+    logging.info('Loading previously trained model...')
     checkpoint = torch.load(mdl_path, map_location='cpu')
     model, optimizer = checkpoint['model'], checkpoint['optimizer']
     model.load_state_dict(checkpoint['state_dict'])
@@ -308,9 +289,6 @@ def _weights_init(mean=0., std=0.02):
         elif classname.find('Linear') != -1 or classname.find('BatchNorm') != -1:
             nn.init.normal_(m.weight, mean, std)
             nn.init.normal_(m.bias, 0)
-            # m.weight.data.normal_(mean, std)
-            # m.bias.data.normal_(0)
-            # m.bias.data.fill_(0)
     return _wi
 
 
