@@ -54,21 +54,21 @@ def train(clf, optimizer, dataset, config, scheduler=None, weights=None, lmcoef=
                 logging.warning(e)
                 train_time = time.time() - t0
                 logging.error('Exception raised! training time for %i epoch(s), %i batch(s): %0.3fs' % (epoch + 1, step, train_time))
-                save_model(clf, optimizer, chckpnt_fname, in_wrapper=in_wrapper, devq=devq, distrb=config.distrb, resume={'epoch':epoch, 'batch':step}, **chckpnt_kwargs)
+                M.save_model(clf, optimizer, chckpnt_fname, in_wrapper=in_wrapper, devq=devq, distrb=config.distrb, resume={'epoch':epoch, 'batch':step}, **chckpnt_kwargs)
                 raise e
             # Save model when program is terminated
             if (killer.kill_now):
                 train_time = time.time() - t0
                 logging.info('Interrupted! training time for %i epoch(s), %i batch(s): %0.3fs' % (epoch + 1, step, train_time))
                 if (not distrb or distrb and hvd.rank() == 0):
-                    save_model(clf, optimizer, chckpnt_fname, in_wrapper=in_wrapper, devq=devq, distrb=config.distrb, resume={'epoch':epoch, 'batch':step}, **chckpnt_kwargs)
+                    M.save_model(clf, optimizer, chckpnt_fname, in_wrapper=in_wrapper, devq=devq, distrb=config.distrb, resume={'epoch':epoch, 'batch':step}, **chckpnt_kwargs)
                 sys.exit(0)
         avg_loss = total_loss / (step + 1)
         logging.info('Train loss in %i epoch(s): %f' % (epoch + 1, avg_loss))
         if epoch % 5 == 0:
             try:
                 if (not distrb or distrb and hvd.rank() == 0):
-                    save_model(clf, optimizer, chckpnt_fname, in_wrapper=in_wrapper, devq=devq, distrb=config.distrb, resume={'epoch':epoch, 'batch':step}, **chckpnt_kwargs)
+                    M.save_model(clf, optimizer, chckpnt_fname, in_wrapper=in_wrapper, devq=devq, distrb=config.distrb, resume={'epoch':epoch, 'batch':step}, **chckpnt_kwargs)
             except Exception as e:
                 logging.warning(e)
         # Earlystop
@@ -82,7 +82,7 @@ def train(clf, optimizer, dataset, config, scheduler=None, weights=None, lmcoef=
     try:
         if (not distrb or distrb and hvd.rank() == 0):
             if os.path.exists(chckpnt_fname): os.remove(chckpnt_fname)
-            save_model(clf, optimizer, model_fname, devq=devq, distrb=config.distrb)
+            M.save_model(clf, optimizer, model_fname, devq=devq, distrb=config.distrb)
     except Exception as e:
         logging.warning(e)
 

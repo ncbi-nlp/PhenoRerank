@@ -10,29 +10,27 @@ from torch.utils.data.sampler import WeightedRandomSampler
 
 from transformers import get_linear_schedule_with_warmup
 
-from bionlp.util import io
-
 from util.config import *
 from util.dataset import OntoDataset
 from util.processor import _adjust_encoder
 from util.trainer import train, eval
-from util.common import _update_cfgs, gen_mdl, gen_clf, save_model, load_model
+from util.common import _update_cfgs, param_reader, gen_mdl, gen_clf, save_model, load_model
 
-global FILE_DIR, CONFIG_FILE, DATA_PATH, SC, cfgr, args
+global FILE_DIR, CONFIG_FILE, DATA_PATH, args
 FILE_DIR = os.path.dirname(os.path.realpath(__file__))
 CONFIG_FILE = os.path.join(FILE_DIR, 'etc', 'config.yaml')
 DATA_PATH = os.path.join(os.path.expanduser('~'), 'data', 'bionlp')
-SC=';;'
 LB_SEP = ';'
-args, cfgr = {}, None
+args = {}
 
 
 def classify(dev_id=None):
-    # config_kwargs = dict([(k, v) for k, v in args.__dict__.items() if not k.startswith('_') and k not in set(['dataset', 'model', 'template']) and v is not None and not callable(v)])
-    config = SimpleConfig.from_file_importmap(args.cfg.setdefault('config', 'config.json'), pkl_fpath=None, import_lib=True)
+    config_updates = dict([(k, v) for k, v in args.__dict__.items() if not k.startswith('_') and k not in set(['model', 'cfg']) and v is not None and not callable(v)])
+    config_updates.update(args.cfg)
+    config = SimpleConfig.from_file_importmap(args.cfg.setdefault('config', 'config.json'), pkl_fpath=None, import_lib=True, updates=config_updates)
     # Prepare model related meta data
     mdl_name = config.model
-    pr = io.param_reader(os.path.join(FILE_DIR, 'etc', '%s.yaml' % config.common_cfg.setdefault('mdl_cfg', 'mdlcfg')))
+    pr = param_reader(os.path.join(FILE_DIR, 'etc', '%s.yaml' % config.common_cfg.setdefault('mdl_cfg', 'mdlcfg')))
     params = pr('LM', config.lm_params) if mdl_name != 'none' else {}
     use_gpu = dev_id is not None
     tokenizer = config.tknzr.from_pretrained(params['pretrained_vocab_path'] if 'pretrained_vocab_path' in params else config.lm_mdl_name) if config.tknzr else {}
@@ -232,11 +230,10 @@ def rerank(dev_id=None):
     args.task = '%s_entilement' % orig_task
     # Prepare model related meta data
     mdl_name = args.model.split('_')[0].lower().replace(' ', '_')
-    common_cfg = cfgr('validate', 'common')
-    pr = io.param_reader(os.path.join(FILE_DIR, 'etc', '%s.yaml' % common_cfg.setdefault('mdl_cfg', 'mdlcfg')))
+    pr = param_reader(os.path.join(FILE_DIR, 'etc', 'mdl_cfg.yaml'))
     config_kwargs = dict([(k, v) for k, v in args.__dict__.items() if not k.startswith('_') and k not in set(['dataset', 'model', 'template']) and v is not None and not callable(v)])
-    orig_config = Configurable(orig_task, mdl_name, common_cfg=common_cfg, wsdir=FILE_DIR, sc=SC, **config_kwargs)
-    config = Configurable(args.task, mdl_name, common_cfg=common_cfg, wsdir=FILE_DIR, sc=SC, **config_kwargs)
+    orig_config = Configurable(orig_task, mdl_name, common_cfg=common_cfg, wsdir=FILE_DIR, sc=config.sc, **config_kwargs)
+    config = Configurable(args.task, mdl_name, common_cfg=common_cfg, wsdir=FILE_DIR, sc=config.sc, **config_kwargs)
     params = pr('LM', config.lm_params) if mdl_name != 'none' else {}
     use_gpu = dev_id is not None
     encode_func = config.encode_func
@@ -323,7 +320,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train or evaluate the re-ranking model.')
     parser.add_argument('-p', '--pid', default=0, action='store', type=int, dest='pid', help='indicate the process ID')
     parser.add_argument('-n', '--np', default=1, action='store', type=int, dest='np', help='indicate the number of processes used for training')
-    parser.add_argument('-f', '--fmt', default='tsv', help='data stored format: tsv or csv [default: %default]')
     parser.add_argument('-j', '--epochs', default=1, action='store', type=int, dest='epochs', help='indicate the epoch used in deep learning')
     parser.add_argument('-z', '--bsize', default=64, action='store', type=int, dest='bsize', help='indicate the batch size used in deep learning')
     parser.add_argument('-g', '--gpunum', default=1, action='store', type=int, dest='gpunum', help='indicate the gpu device number')
@@ -332,75 +328,23 @@ if __name__ == '__main__':
     parser.add_argument('--distrb', default=False, action='store_true', dest='distrb', help='whether to distribute data over multiple devices')
     parser.add_argument('--distbknd', default='nccl', action='store', dest='distbknd', help='distribute framework backend')
     parser.add_argument('--disturl', default='env://', action='store', dest='disturl', help='distribute framework url')
-    parser.add_argument('--optim', default='adam', action='store', dest='optim', help='indicate the optimizer')
-    parser.add_argument('--wrmprop', default=0.1, action='store', type=float, dest='wrmprop', help='indicate the warmup proportion')
-    parser.add_argument('--trainsteps', default=1000, action='store', type=int, dest='trainsteps', help='indicate the training steps')
-    parser.add_argument('--traindev', default=False, action='store_true', dest='traindev', help='whether to use dev dataset for training')
-    parser.add_argument('--noeval', default=False, action='store_true', dest='noeval', help='whether to train only')
-    parser.add_argument('--noschdlr', default=False, action='store_true', dest='noschdlr', help='force to not use scheduler whatever the default setting is')
-    parser.add_argument('--earlystop', default=False, action='store_true', dest='earlystop', help='whether to use early stopping')
-    parser.add_argument('--es_patience', default=5, action='store', type=int, dest='es_patience', help='indicate the tolerance time for training metric violation')
-    parser.add_argument('--es_delta', default=float(5e-3), action='store', type=float, dest='es_delta', help='indicate the minimum delta of early stopping')
-    parser.add_argument('--vocab', dest='vocab', help='vocabulary file')
-    parser.add_argument('--bpe', dest='bpe', help='bpe merge file')
-    parser.add_argument('--w2v', dest='w2v_path', help='word2vec model file')
-    parser.add_argument('--sentvec', dest='sentvec_path', help='sentvec model file')
     parser.add_argument('--maxlen', default=128, action='store', type=int, dest='maxlen', help='indicate the maximum sequence length for each samples')
     parser.add_argument('--maxtrial', default=50, action='store', type=int, dest='maxtrial', help='maximum time to try')
-    parser.add_argument('--initln', default=False, action='store_true', dest='initln', help='whether to initialize the linear layer')
-    parser.add_argument('--initln_mean', default=0., action='store', type=float, dest='initln_mean', help='indicate the mean of the parameters in linear model when Initializing')
-    parser.add_argument('--initln_std', default=0.02, action='store', type=float, dest='initln_std', help='indicate the standard deviation of the parameters in linear model when Initializing')
-    parser.add_argument('--weight_class', default=False, action='store_true', dest='weight_class', help='whether to drop the last incompleted batch')
-    parser.add_argument('--clswfac', default='1', action='store', type=str, dest='clswfac', help='whether to drop the last incompleted batch')
-    parser.add_argument('--droplast', default=False, action='store_true', dest='droplast', help='whether to drop the last incompleted batch')
-    parser.add_argument('--do_norm', default=False, action='store_true', dest='do_norm', help='whether to do normalization')
-    parser.add_argument('--norm_type', default='batch', action='store', dest='norm_type', help='normalization layer class')
-    parser.add_argument('--do_extlin', default=False, action='store_true', dest='do_extlin', help='whether to apply additional fully-connected layer to the hidden states of the language model')
-    parser.add_argument('--do_lastdrop', default=False, action='store_true', dest='do_lastdrop', help='whether to apply dropout to the last layer')
-    parser.add_argument('--lm_loss', default=False, action='store_true', dest='lm_loss', help='whether to apply dropout to the last layer')
-    parser.add_argument('--do_crf', default=False, action='store_true', dest='do_crf', help='whether to apply CRF layer')
-    parser.add_argument('--do_thrshld', default=False, action='store_true', dest='do_thrshld', help='whether to apply ThresholdEstimator layer')
-    parser.add_argument('--fchdim', default=0, action='store', type=int, dest='fchdim', help='indicate the dimensions of the hidden layers in the Embedding-based classifier, 0 means using only one linear layer')
-    parser.add_argument('--iactvtn', default='relu', action='store', dest='iactvtn', help='indicate the internal activation function')
-    parser.add_argument('--oactvtn', default='sigmoid', action='store', dest='oactvtn', help='indicate the output activation function')
-    parser.add_argument('--bert_outlayer', default='-1', action='store', type=str, dest='output_layer', help='indicate which layer to be the output of BERT model')
-    parser.add_argument('--pooler', dest='pooler', help='indicate the pooling strategy when selecting features: max or avg')
-    parser.add_argument('--seq2seq', dest='seq2seq', help='indicate the seq2seq strategy when converting sequences of embeddings into a vector')
-    parser.add_argument('--seq2vec', dest='seq2vec', help='indicate the seq2vec strategy when converting sequences of embeddings into a vector: pytorch-lstm, cnn, or cnn_highway')
-    parser.add_argument('--ssfunc', dest='sentsim_func', help='indicate the sentence similarity metric [dist|sim]')
-    parser.add_argument('--catform', dest='concat_strategy', help='indicate the sentence similarity metric [normal|diff]')
-    parser.add_argument('--ymode', default='sim', dest='ymode', help='indicate the sentence similarity metric in gold standard [dist|sim]')
-    parser.add_argument('--loss', dest='loss', help='indicate the loss function')
-    parser.add_argument('--cnstrnts', dest='cnstrnts', help='indicate the constraint scheme')
-    parser.add_argument('--lr', default=float(1e-3), action='store', type=float, dest='lr', help='indicate the learning rate of the optimizer')
-    parser.add_argument('--wdecay', default=float(1e-5), action='store', type=float, dest='wdecay', help='indicate the weight decay of the optimizer')
-    parser.add_argument('--lmcoef', default=0.5, action='store', type=float, dest='lmcoef', help='indicate the coefficient of the language model loss when fine tuning')
-    parser.add_argument('--sampfrac', action='store', type=float, dest='sampfrac', help='indicate the sampling fraction for datasets')
-    parser.add_argument('--pdrop', default=0.2, action='store', type=float, dest='pdrop', help='indicate the dropout probabilitiy for all fully connected layers in the embeddings, encoder, and pooler')
-    parser.add_argument('--pthrshld', default=0.5, action='store', type=float, dest='pthrshld', help='indicate the threshold for predictive probabilitiy')
-    parser.add_argument('--topk', default=5, action='store', type=int, dest='topk', help='indicate the top k search parameter')
-    parser.add_argument('--do_tfidf', default=False, action='store_true', dest='do_tfidf', help='whether to use tfidf as text features')
-    parser.add_argument('--do_chartfidf', default=False, action='store_true', dest='do_chartfidf', help='whether to use charater tfidf as text features')
-    parser.add_argument('--do_bm25', default=False, action='store_true', dest='do_bm25', help='whether to use bm25 as text features')
-    parser.add_argument('--clipmaxn', action='store', type=float, dest='clipmaxn', help='indicate the max norm of the gradients')
+    parser.add_argument('--clswfac', default='1', type=str, help='whether to drop the last incompleted batch')
+    parser.add_argument('--bert_outlayer', default='-1', type=str, dest='output_layer', help='indicate which layer to be the output of BERT model')
     parser.add_argument('--resume', action='store', dest='resume', help='resume training model file')
     parser.add_argument('--refresh', default=False, action='store_true', dest='refresh', help='refresh the trained model with newest code')
-    parser.add_argument('--sampw', default=False, action='store_true', dest='sample_weights', help='use sample weights')
-    parser.add_argument('--corpus', help='corpus data')
     parser.add_argument('--onto', help='ontology data')
     parser.add_argument('--pred', help='prediction file')
     parser.add_argument('--sent', default=False, action='store_true', dest='sent', help='whether to use location of labels to split the text into sentences')
     parser.add_argument('--datapath', help='location of dataset')
     parser.add_argument('-i', '--input', help='input dataset')
     parser.add_argument('--prvres', help='previous results for re-ranking')
-    parser.add_argument('-w', '--cache', default='.cache', help='the location of cache files')
-    parser.add_argument('-u', '--task', default='ddi', type=str, dest='task', help='the task name [default: %default]')
-    parser.add_argument('--model', default='gpt2', type=str, dest='model', help='the model to be validated')
+    parser.add_argument('-u', '--task', default='hpo_entilement', type=str, dest='task', help='the task name [default: %default]')
+    parser.add_argument('--model', default='bert', type=str, dest='model', help='the model to be validated')
     parser.add_argument('--encoder', dest='encoder', help='the encoder to be used after the language model: pool, s2v or s2s')
     parser.add_argument('--pretrained', dest='pretrained', help='pretrained model file')
-    parser.add_argument('--seed', dest='seed', help='manually set the random seed')
-    parser.add_argument('--dfsep', default='\t', help='separate character for pandas dataframe')
-    parser.add_argument('--sc', default=';;', help='separate character for multiple-value records')
+    parser.add_argument('--seed', help='manually set the random seed')
     parser.add_argument('-c', '--cfg', help='config string used to update the settings, format: {\'param_name1\':param_value1[, \'param_name1\':param_value1]}')
     parser.add_argument('-m', '--method', default='rerank', help='main method to run')
     parser.add_argument('-v', '--verbose', default=False, action='store_true', dest='verbose', help='display detailed information')
@@ -408,13 +352,6 @@ if __name__ == '__main__':
 
     # Logging setting
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
-
-    # Parse config file
-    if (os.path.exists(CONFIG_FILE)):
-    	cfgr = io.cfg_reader(CONFIG_FILE)
-    else:
-        logging.error('Config file `%s` does not exist!' % CONFIG_FILE)
-        sys.exit(1)
 
     # Update config
     cfg_kwargs = {} if args.cfg is None else ast.literal_eval(args.cfg)
@@ -442,7 +379,6 @@ if __name__ == '__main__':
 
     # Process config
     if args.datapath is not None: DATA_PATH = args.datapath
-    SC = args.sc
 
     # Random seed setting
     if args.seed is not None:

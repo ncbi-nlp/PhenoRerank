@@ -106,29 +106,31 @@ class SimpleConfig(Serializable):
         super(SimpleConfig, self).to_file(fpath=fpath, pkl_fpath=None)
 
     @classmethod
-    def from_yaml(cls, fpath='config.yaml', pkl_fpath='config.pkl', import_lib=False, import_map={}):
+    def from_yaml(cls, fpath='config.yaml', pkl_fpath='config.pkl', import_lib=False, import_map={}, updates={}):
         attributes = C.read_yaml(fpath)
+        attributes.update(updates)
         return cls(attributes, pkl_fpath=pkl_fpath, import_lib=import_lib, import_map=import_map)
 
     @classmethod
-    def from_json(cls, fpath='config.json', pkl_fpath='config.pkl', import_lib=False, import_map={}):
+    def from_json(cls, fpath='config.json', pkl_fpath='config.pkl', import_lib=False, import_map={}, updates={}):
         attributes = C.read_json(fpath)
+        attributes.update(updates)
         return cls(attributes, pkl_fpath=pkl_fpath, import_lib=import_lib, import_map=import_map)
 
     @classmethod
-    def from_file(cls, fpath='config.json', pkl_fpath='config.pkl', import_lib=False, import_map={}):
+    def from_file(cls, fpath='config.json', pkl_fpath='config.pkl', import_lib=False, import_map={}, updates={}):
         if fpath.endswith('.yaml') or fpath.endswith('.yml'):
-            return cls.from_yaml(fpath, pkl_fpath=pkl_fpath, import_lib=import_lib, import_map=import_map)
+            return cls.from_yaml(fpath, pkl_fpath=pkl_fpath, import_lib=import_lib, import_map=import_map, updates=updates)
         elif fpath.endswith('.json'):
-            return cls.from_json(fpath, pkl_fpath=pkl_fpath, import_lib=import_lib, import_map=import_map)
+            return cls.from_json(fpath, pkl_fpath=pkl_fpath, import_lib=import_lib, import_map=import_map, updates=updates)
 
     @classmethod
-    def from_file_importmap(cls, fpath='config.json', pkl_fpath='config.pkl', import_lib=False, import_map_fpath='import_map.json'):
+    def from_file_importmap(cls, fpath='config.json', pkl_fpath='config.pkl', import_lib=False, import_map_fpath='import_map.json', updates={}):
         try:
             import_map = C.read_json(import_map_fpath)
         except Exception as e:
             import_map = {}
-        return cls.from_file(fpath=fpath, pkl_fpath=pkl_fpath, import_lib=import_lib, import_map=import_map)
+        return cls.from_file(fpath=fpath, pkl_fpath=pkl_fpath, import_lib=import_lib, import_map=import_map, updates=updates)
 
 
 ### Unit Test ###
