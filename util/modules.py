@@ -107,7 +107,7 @@ class BaseClfHead(nn.Module):
         # Pooling
         if self.debug: logging.debug(('hdstat: ', [x.size() for x in hidden_states] if type(hidden_states) is list else hidden_states.size()))
         clf_h, mask = self.clf_h(hidden_states, mask, all_hidden_states=all_hidden_states, extra_outputs=extra_outputs)
-        if self.debug: logging.debug(('after clf_h', [x.size() for x in clf_h] if type(clf_h) is list else clf_h.size()))
+        if self.debug: logging.debug(('after clf_h', [x.size() for x in clf_h] if type(clf_h) is list or type(clf_h) is tuple else clf_h.size()))
         clf_h = self.pool(input_ids, extra_inputs_dict, mask, clf_h, extra_outputs=extra_outputs)
         if self.debug: logging.debug(('after pool', [x.size() for x in clf_h] if type(clf_h) is list else clf_h.size()))
 
@@ -380,7 +380,7 @@ class OntoBERTClfHead(BERTClfHead):
         self.att2spans = nn.Linear(self.maxlen, 2)
 
     def _clf_h(self, hidden_states, mask, all_hidden_states=None, extra_outputs={}):
-        return (all_hidden_states, torch.stack(mask).max(0)[0]) if type(all_hidden_states) is list else (all_hidden_states, mask)
+        return (all_hidden_states, torch.stack(mask).max(0)[0]) if type(hidden_states) is list else (all_hidden_states, mask)
 
     def pool(self, input_ids, extra_inputs, mask, clf_h, extra_outputs={}):
         all_clf_h = clf_h

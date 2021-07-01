@@ -18,6 +18,7 @@ RGRSN_LOSS_MAP = {'contrastive':M.ContrastiveLoss}
 NORM_TYPE_MAP = {'batch':nn.BatchNorm1d, 'layer':nn.LayerNorm}
 ACTVTN_MAP = {'relu':nn.ReLU, 'sigmoid':nn.Sigmoid, 'tanh':nn.Tanh}
 SIM_FUNC_MAP = {'sim':'sim', 'dist':'dist'}
+NUM_UNDERLINE_IN_ORIG = {'biolarkgsc':0, 'copd':1}
 
 
 ### Serializable interface ###
@@ -108,13 +109,13 @@ class SimpleConfig(Serializable):
     @classmethod
     def from_yaml(cls, fpath='config.yaml', pkl_fpath='config.pkl', import_lib=False, import_map={}, updates={}):
         attributes = C.read_yaml(fpath)
-        attributes.update(updates)
+        C.exhausted_updates(attributes, updates)
         return cls(attributes, pkl_fpath=pkl_fpath, import_lib=import_lib, import_map=import_map)
 
     @classmethod
     def from_json(cls, fpath='config.json', pkl_fpath='config.pkl', import_lib=False, import_map={}, updates={}):
         attributes = C.read_json(fpath)
-        attributes.update(updates)
+        C.exhausted_updates(attributes, updates)
         return cls(attributes, pkl_fpath=pkl_fpath, import_lib=import_lib, import_map=import_map)
 
     @classmethod

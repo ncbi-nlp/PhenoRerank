@@ -1,10 +1,11 @@
-import os, io, re, sys, json, yaml, copy, codecs, itertools, signal, logging
+import os, io, re, sys, json, yaml, copy, codecs, itertools, collections, signal, logging
 
 from abc import ABC, abstractmethod
 
 import numpy as np
 import scipy as sp
 from scipy.sparse import csc_matrix
+import pandas as pd
 
 import torch
 from torch import nn
@@ -13,6 +14,8 @@ from allennlp.modules.seq2vec_encoders import PytorchSeq2VecWrapper
 from allennlp.modules.seq2seq_encoders import PytorchSeq2SeqWrapper
 
 from .dataset import DataParallel
+
+LB_SEP = ';'
 
 
 class EarlyStopping(object):
@@ -113,6 +116,13 @@ def write_file(content, fpath, code='ascii'):
 		sys.exit(-1)
 
 
+def write_json(data, fpath='data.json', code='ascii', **kwargs):
+	if (type(data) is not dict): data = dict(data=data)
+	kw_args = dict(sort_keys=True, indent=4, separators=(',', ': '))
+	kw_args.update(kwargs)
+	fs.write_file(json.dumps(data, **kw_args), fpath=fpath, code=code)
+
+
 def read_json(fpath):
 	with open(fpath) as fd:
 		res = json.load(fd)
@@ -146,7 +156,7 @@ def read_yaml(fpath):
 	fpath = os.path.splitext(fpath)[0] + '.yaml'
 	if (os.path.exists(fpath)):
 		with open(fpath, 'r') as f:
-			return yaml.load(f)
+			return yaml.safe_load(f)
 	else:
 		print(('File %s does not exist!' % fpath))
 
@@ -327,6 +337,14 @@ def _update_cfgs(global_vars, cfgs):
                 global_vars[glb] = glbvs
 
 
+def overlap_tuple(tuples, search, ret_idx=False):
+    res = []
+    for i, t in enumerate(tuples):
+        if(t[1] > search[0] and t[0] < search[1]):
+            res.append((i, t) if ret_idx else t)
+    return (tuple(zip(*res)) if len(res) > 0 else ([],[])) if ret_idx else res
+
+
 def normalize(a, ord=1):
     norm=np.linalg.norm(a, ord=ord)
     if norm==0: norm=np.finfo(a.dtype).eps
@@ -341,3 +359,98 @@ def flatten_list(nested_list):
 		return flatten_list(l)
 	else:
 		return l
+
+
+def exhausted_updates(dict1, dict2):
+    def _rec_update(target, source):
+        if type(target) is dict:
+            for k, v in target.items():
+                _rec_update(v, source)
+            common_keys = set(target.keys()) & set(source.keys())
+            target.update(dict([(k, v) for k, v in source.items() if k in common_keys]))
+    dict1.update(dict2)
+    _rec_update(dict1, dict2)
+
+
+def seqmatch(text, query):
+    import difflib
+    s = difflib.SequenceMatcher(None, text, query)
+    return sum(n for i,j,n in s.get_matching_blocks()) / float(len(query))
+
+
+def match_dict(text, cid, dictionary, fields=['label'], metric=seqmatch):
+    return np.max([metric(text, lb) for lb in dictionary.loc[cid][fields] if type(lb) is str])
+
+
+def split_df(df, lb_col='labels', lb_sep=';', keep_locs=True, update_locs=False):
+    splitted_data = []
+    for doc_id, row in df.iterrows():
+        orig_labels = row[lb_col].split(lb_sep) if type(row[lb_col]) is str and row[lb_col] and not row[lb_col].isspace() else []
+        if len(orig_labels) == 0:
+            splitted_data.append(row.to_dict())
+            continue
+        labels, locs = zip(*[lb.split('|') for lb in orig_labels])
+        doc = nlp(row['text'])
+        sent_bndrs = [(s.start_char, s.end_char) for s in doc.sents]
+        lb_locs = [tuple(map(int, loc.split(':'))) for loc in locs]
+        if (np.amax(lb_locs) > np.amax(sent_bndrs)): lb_locs = np.array(lb_locs) - np.amin(lb_locs) # Temporary fix
+        overlaps = list(filter(lambda x: len(x) > 0, [overlap_tuple(lb_locs, sb, ret_idx=True) for sb in sent_bndrs]))
+        indices, locss = zip(*overlaps) if len(overlaps) > 0 else ([[]]*len(sent_bndrs),[[]]*len(sent_bndrs))
+        indices, locss = list(map(list, indices)), list(map(list, locss))
+        miss_aligned = list(set(range(len(labels))) - set(itertools.chain.from_iterable(indices)))
+        if len(miss_aligned) > 0:
+            for i in range(len(sent_bndrs)):
+                indices[i].extend(miss_aligned)
+                locss[i].extend([sent_bndrs[i]]*len(miss_aligned))
+        last_idx = 0
+        for i, (idx, locs, sent) in enumerate(zip(indices, locss, doc.sents)):
+            lbs = [labels[x] for x in idx]
+            row['id'] = '_'.join(map(str, [doc_id, i]))
+            row['text'] = sent.text
+            row[lb_col] = lb_sep.join(['|'.join([lb, ':'.join(map(str, np.array(loc)-(last_idx if update_locs else 0)))]) for lb, loc in zip(lbs, locs)] if keep_locs else lbs)
+            last_idx += sent.end_char
+            splitted_data.append(row.to_dict())
+    splitted_df = pd.DataFrame(splitted_data)
+    return splitted_df
+
+
+def mltl2entlmnt(in_fpath, onto_dict, out_fpath=None, lb_col='labels', pred_col='preds', sent_mode=False, max_num_samp=1):
+    df = pd.read_csv(in_fpath, sep='\t', index_col='id')
+    if sent_mode: df = split_df(df, lb_col=pred_col, lb_sep=LB_SEP, keep_locs=False).set_index('id')
+    pid, text1, text2, ontos, label, label1, label2 = [[] for x in range(7)]
+    for doc_id, row in df.iterrows():
+        labels = row[lb_col].split(LB_SEP) if type(row[lb_col]) is str and row[lb_col] and not row[lb_col].isspace() else []
+        labels = list(map(lambda x: x.split('|')[0], labels))
+        preds = row[pred_col].split(LB_SEP) if type(row[pred_col]) is str and row[pred_col] and not row[pred_col].isspace() else []
+        preds = list(map(lambda x: x.split('|')[0], preds))
+        names = [(onto_dict.loc[lb]['label'].tolist()[0] if type(onto_dict.loc[lb]['label']) is pd.Series else onto_dict.loc[lb]['label']) if lb in onto_dict.index else [] for lb in preds]
+        notes = [(list(set(onto_dict.loc[lb]['text'].tolist())) if type(onto_dict.loc[lb]['text']) is pd.Series else [onto_dict.loc[lb]['text']]) if lb in onto_dict.index else [[t for t in onto_dict.loc[lb][['label','exact_synm','relate_synm','narrow_synm','broad_synm']] if t is not np.nan][0]] if lb in onto_dict.index else [] for lb in preds if lb]
+        for i, lb, name, note in zip(range(len(preds)), preds, names, notes):
+            if len(note) == 0: continue
+            note = note[:min(len(note), max_num_samp)]
+            for j, ntxt in enumerate(note):
+                pid.append('%s_%i_%i' % (doc_id, i, j))
+                text1.append(row['text'])
+                text2.append(ntxt)
+                label.append('include' if lb in labels else '')
+            ontos.extend([name]*len(note))
+            label1.extend([';'.join(labels)]*len(note))
+            label2.extend([lb]*len(note))
+    entlmnt_df = pd.DataFrame(collections.OrderedDict(id=pid, text1=text1, text2=text2, onto=ontos, label=label, label1=label1, label2=label2))
+    entlmnt_df.to_csv(('%s_entlmnt.csv' % os.path.splitext(in_fpath)[0]) if out_fpath is None else out_fpath, sep='\t', index=None, encoding='utf-8')
+
+
+def entlmnt2mltl(in_fpath, ref_df, onto_dict, out_fpath=None, idx_num_underline=0, text_sim=seqmatch, sim_thrshld=0.9):
+    sms_pred_df = pd.read_csv(in_fpath, sep='\t', encoding='utf-8', engine='python')
+    sms_pred_df['orig_id'] = ['_'.join(str(idx).split('_')[:idx_num_underline+1]) for idx in sms_pred_df['id']]
+    merged_data = {'id':[], 'labels':[]}
+    for gid, grp in sms_pred_df.groupby('orig_id'):
+        merged_lbs = [lb for text, lb, pred in zip(grp['text1'], grp['label2'], grp['preds']) if pred == 'include' or match_dict(text, lb, onto_dict, fields=['label', 'exact_synm', 'relate_synm', 'narrow_synm', 'broad_synm'], metric=text_sim)>sim_thrshld]
+        merged_data['id'].append(gid)
+        merged_data['labels'].append(LB_SEP.join(merged_lbs) if len(merged_lbs) > 0 else '')
+    pred_df = ref_df.copy()
+    not_pred_ids = set(map(str, pred_df['id'].values)) - set(merged_data['id'])
+    filtered_ids = [idx for idx in pred_df['id'] if idx not in not_pred_ids]
+    pred_df['preds'] = [[]] * pred_df.shape[0]
+    pred_df.loc[pred_df['id'].apply(lambda x: x not in not_pred_ids), 'preds'] = pd.DataFrame(merged_data).set_index('id').loc[filtered_ids]['labels'].tolist()
+    pred_df.to_csv(('%s_reranked.csv' % os.path.splitext(in_fpath)[0]) if out_fpath is None else out_fpath, sep='\t', index=None, encoding='utf-8')

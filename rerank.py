@@ -14,19 +14,17 @@ from util.config import *
 from util.dataset import OntoDataset
 from util.processor import _adjust_encoder
 from util.trainer import train, eval
-from util.common import _update_cfgs, param_reader, gen_mdl, gen_clf, save_model, load_model
+from util.common import _update_cfgs, param_reader, write_json, read_json, gen_mdl, gen_clf, _handle_model, save_model, load_model, seqmatch, mltl2entlmnt, entlmnt2mltl
 
-global FILE_DIR, CONFIG_FILE, DATA_PATH, args
-FILE_DIR = os.path.dirname(os.path.realpath(__file__))
-CONFIG_FILE = os.path.join(FILE_DIR, 'etc', 'config.yaml')
+global FILE_DIR, DATA_PATH, args
+FILE_DIR = os.path.dirname(os.path.abspath(os.path.realpath(__file__)))
 DATA_PATH = os.path.join(os.path.expanduser('~'), 'data', 'bionlp')
-LB_SEP = ';'
 args = {}
 
 
 def classify(dev_id=None):
     config_updates = dict([(k, v) for k, v in args.__dict__.items() if not k.startswith('_') and k not in set(['model', 'cfg']) and v is not None and not callable(v)])
-    config_updates.update(args.cfg)
+    config_updates.update({**args.cfg, **{'wsdir':FILE_DIR}})
     config = SimpleConfig.from_file_importmap(args.cfg.setdefault('config', 'config.json'), pkl_fpath=None, import_lib=True, updates=config_updates)
     # Prepare model related meta data
     mdl_name = config.model
@@ -60,6 +58,7 @@ def classify(dev_id=None):
     else:
         class_weights = torch.Tensor(1.0 / class_count)
         class_weights /= class_weights.sum()
+        class_weights *= (args.clswfac[min(len(args.clswfac)-1, i)] if type(args.clswfac) is list else args.clswfac)
         sampler = WeightedRandomSampler(weights=class_weights, num_samples=config.bsize, replacement=True)
         if not config.distrb and type(dev_id) is list: class_weights = class_weights.repeat(len(dev_id))
 
@@ -110,6 +109,7 @@ def classify(dev_id=None):
         optimizer = hvd.DistributedOptimizer(optimizer, named_parameters=clf.named_parameters())
         # Broadcast parameters from rank 0 to all other processes.
         hvd.broadcast_parameters(clf.state_dict(), root_rank=0)
+        hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
     # Training
     train(clf, optimizer, train_loader, config, scheduler, weights=class_weights, lmcoef=config.lmcoef, clipmaxn=config.clipmaxn, epochs=config.epochs, earlystop=config.earlystop, earlystop_delta=config.es_delta, earlystop_patience=config.es_patience, use_gpu=use_gpu, devq=dev_id, distrb=config.distrb, resume=resume if config.resume else {})
@@ -133,172 +133,67 @@ def classify(dev_id=None):
     eval(clf, test_loader, config, ds_name='test', use_gpu=use_gpu, devq=dev_id, distrb=config.distrb, ignored_label=task_extparms.setdefault('ignored_label', None))
 
 
-def _overlap_tuple(tuples, search, ret_idx=False):
-    res = []
-    for i, t in enumerate(tuples):
-        if(t[1] > search[0] and t[0] < search[1]):
-            res.append((i, t) if ret_idx else t)
-    return (tuple(zip(*res)) if len(res) > 0 else ([],[])) if ret_idx else res
-
-
-def split_df(df, lb_col='labels', lb_sep=';', keep_locs=True, update_locs=False):
-    splitted_data = []
-    for doc_id, row in df.iterrows():
-        orig_labels = row[lb_col].split(lb_sep) if type(row[lb_col]) is str and row[lb_col] and not row[lb_col].isspace() else []
-        if len(orig_labels) == 0:
-            splitted_data.append(row.to_dict())
-            continue
-        labels, locs = zip(*[lb.split('|') for lb in orig_labels])
-        doc = nlp(row['text'])
-        sent_bndrs = [(s.start_char, s.end_char) for s in doc.sents]
-        lb_locs = [tuple(map(int, loc.split(':'))) for loc in locs]
-        if (np.amax(lb_locs) > np.amax(sent_bndrs)): lb_locs = np.array(lb_locs) - np.amin(lb_locs) # Temporary fix
-        overlaps = list(filter(lambda x: len(x) > 0, [_overlap_tuple(lb_locs, sb, ret_idx=True) for sb in sent_bndrs]))
-        indices, locss = zip(*overlaps) if len(overlaps) > 0 else ([[]]*len(sent_bndrs),[[]]*len(sent_bndrs))
-        indices, locss = list(map(list, indices)), list(map(list, locss))
-        miss_aligned = list(set(range(len(labels))) - set(itertools.chain.from_iterable(indices)))
-        if len(miss_aligned) > 0:
-            for i in range(len(sent_bndrs)):
-                indices[i].extend(miss_aligned)
-                locss[i].extend([sent_bndrs[i]]*len(miss_aligned))
-        last_idx = 0
-        for i, (idx, locs, sent) in enumerate(zip(indices, locss, doc.sents)):
-            lbs = [labels[x] for x in idx]
-            row['id'] = '_'.join(map(str, [doc_id, i]))
-            row['text'] = sent.text
-            row[lb_col] = lb_sep.join(['|'.join([lb, ':'.join(map(str, np.array(loc)-(last_idx if update_locs else 0)))]) for lb, loc in zip(lbs, locs)] if keep_locs else lbs)
-            last_idx += sent.end_char
-            splitted_data.append(row.to_dict())
-    splitted_df = pd.DataFrame(splitted_data)
-    return splitted_df
-
-
-def mltl2entlmnt(in_fpath, onto_dict, out_fpath=None, lb_col='labels', pred_col='preds', sent_mode=False, max_num_samp=1):
-    df = pd.read_csv(in_fpath, sep='\t', index_col='id')
-    if sent_mode: df = split_df(df, lb_col=pred_col, lb_sep=LB_SEP, keep_locs=False).set_index('id')
-    pid, text1, text2, ontos, label, label1, label2 = [[] for x in range(7)]
-    for doc_id, row in df.iterrows():
-        labels = row[lb_col].split(LB_SEP) if type(row[lb_col]) is str and row[lb_col] and not row[lb_col].isspace() else []
-        labels = list(map(lambda x: x.split('|')[0], labels))
-        preds = row[pred_col].split(LB_SEP) if type(row[pred_col]) is str and row[pred_col] and not row[pred_col].isspace() else []
-        preds = list(map(lambda x: x.split('|')[0], preds))
-        names = [(onto_dict.loc[lb]['label'].tolist()[0] if type(onto_dict.loc[lb]['label']) is pd.Series else onto_dict.loc[lb]['label']) if lb in onto_dict.index else [] for lb in preds]
-        notes = [(list(set(onto_dict.loc[lb]['text'].tolist())) if type(onto_dict.loc[lb]['text']) is pd.Series else [onto_dict.loc[lb]['text']]) if lb in onto_dict.index else [[t for t in onto_dict.loc[lb][['label','exact_synm','relate_synm','narrow_synm','broad_synm']] if t is not np.nan][0]] if lb in onto_dict.index else [] for lb in preds if lb]
-        for i, lb, name, note in zip(range(len(preds)), preds, names, notes):
-            if len(note) == 0: continue
-            note = note[:min(len(note), max_num_samp)]
-            for j, ntxt in enumerate(note):
-                pid.append('%s_%i_%i' % (doc_id, i, j))
-                text1.append(row['text'])
-                text2.append(ntxt)
-                label.append('include' if lb in labels else '')
-            ontos.extend([name]*len(note))
-            label1.extend([';'.join(labels)]*len(note))
-            label2.extend([lb]*len(note))
-    entlmnt_df = pd.DataFrame(OrderedDict(id=pid, text1=text1, text2=text2, onto=ontos, label=label, label1=label1, label2=label2))
-    entlmnt_df.to_csv(('%s_entlmnt.csv' % os.path.splitext(in_fpath)[0]) if out_fpath is None else out_fpath, sep='\t', index=None, encoding='utf-8')
-
-def seqmatch(text, query):
-    import difflib
-    s = difflib.SequenceMatcher(None, text, query)
-    return sum(n for i,j,n in s.get_matching_blocks()) / float(len(query))
-
-def match_dict(text, cid, dictionary, fields=['label'], metric=seqmatch):
-    return np.max([metric(text, lb) for lb in dictionary.loc[cid][fields] if type(lb) is str])
-
-NUM_UNDERLINE_IN_ORIG = {'biolarkgsc':0, 'copd':1}
-
-def entlmnt2mltl(in_fpath, ref_df, onto_dict, out_fpath=None, idx_num_underline=0, text_sim=seqmatch, sim_thrshld=0.9):
-    sms_pred_df = pd.read_csv(in_fpath, sep='\t', encoding='utf-8', engine='python')
-    sms_pred_df['orig_id'] = ['_'.join(str(idx).split('_')[:idx_num_underline+1]) for idx in sms_pred_df['id']]
-    merged_data = {'id':[], 'labels':[]}
-    for gid, grp in sms_pred_df.groupby('orig_id'):
-        merged_lbs = [lb for text, lb, pred in zip(grp['text1'], grp['label2'], grp['preds']) if pred == 'include' or match_dict(text, lb, onto_dict, fields=['label', 'exact_synm', 'relate_synm', 'narrow_synm', 'broad_synm'], metric=text_sim)>sim_thrshld]
-        merged_data['id'].append(gid)
-        merged_data['labels'].append(LB_SEP.join(merged_lbs) if len(merged_lbs) > 0 else '')
-    pred_df = ref_df.copy()
-    not_pred_ids = set(map(str, pred_df['id'].values)) - set(merged_data['id'])
-    filtered_ids = [idx for idx in pred_df['id'] if idx not in not_pred_ids]
-    pred_df['preds'] = [[]] * pred_df.shape[0]
-    pred_df.loc[pred_df['id'].apply(lambda x: x not in not_pred_ids), 'preds'] = pd.DataFrame(merged_data).set_index('id').loc[filtered_ids]['labels'].tolist()
-    pred_df.to_csv(('%s_reranked.csv' % os.path.splitext(in_fpath)[0]) if out_fpath is None else out_fpath, sep='\t', index=None, encoding='utf-8')
-
-
 def rerank(dev_id=None):
     print('### Re-rank Mode ###')
     orig_task = args.task
     args.task = '%s_entilement' % orig_task
+    config_updates = dict([(k, v) for k, v in args.__dict__.items() if not k.startswith('_') and k not in set(['model', 'cfg']) and v is not None and not callable(v)])
+    config_updates.update({**args.cfg, **{'wsdir':FILE_DIR}})
+    config = SimpleConfig.from_file_importmap(args.cfg.setdefault('config', 'config.json'), pkl_fpath=None, import_lib=True, updates=config_updates)
     # Prepare model related meta data
-    mdl_name = args.model.split('_')[0].lower().replace(' ', '_')
-    pr = param_reader(os.path.join(FILE_DIR, 'etc', 'mdl_cfg.yaml'))
-    config_kwargs = dict([(k, v) for k, v in args.__dict__.items() if not k.startswith('_') and k not in set(['dataset', 'model', 'template']) and v is not None and not callable(v)])
-    orig_config = Configurable(orig_task, mdl_name, common_cfg=common_cfg, wsdir=FILE_DIR, sc=config.sc, **config_kwargs)
-    config = Configurable(args.task, mdl_name, common_cfg=common_cfg, wsdir=FILE_DIR, sc=config.sc, **config_kwargs)
+    mdl_name = config.model
+    pr = param_reader(os.path.join(FILE_DIR, 'etc', '%s.yaml' % config.common_cfg.setdefault('mdl_cfg', 'mdlcfg')))
     params = pr('LM', config.lm_params) if mdl_name != 'none' else {}
     use_gpu = dev_id is not None
     encode_func = config.encode_func
     tokenizer = config.tknzr.from_pretrained(params['pretrained_vocab_path'] if 'pretrained_vocab_path' in params else config.lm_mdl_name) if config.tknzr else None
-    task_type = config.task_type
-    spcl_tkns = config.lm_tknz_extra_char if config.lm_tknz_extra_char else ['_@_', ' _$_', ' _#_']
-    special_tkns = (['start_tknids', 'clf_tknids', 'delim_tknids'], spcl_tkns[:3]) if task_type in ['entlmnt', 'sentsim'] else (['start_tknids', 'clf_tknids'], spcl_tkns[:2])
-    special_tknids = _adjust_encoder(mdl_name, tokenizer, config, special_tkns[1], ret_list=True)
-    special_tknids_args = dict(zip(special_tkns[0], special_tknids))
-    task_trsfm_kwargs = dict(list(zip(special_tkns[0], special_tknids))+[('model',args.model), ('sentsim_func', args.sentsim_func), ('seqlen',args.maxlen)])
-    # Prepare task related meta data
-    args.input = '%s_entlmnt.csv' % orig_task
-    onto_dict = pd.read_csv(args.onto if args.onto and os.path.exists(args.onto) else 'hpo_dict.csv', sep='\t', index_col='id', encoding='utf-8')
-    mltl2entlmnt(args.prvres if args.prvres and os.path.exists(args.prvres) else os.path.join(DATA_PATH, orig_config.task_path, 'test.%s' % args.fmt), onto_dict, out_fpath=args.input, sent_mode=args.sent)
-    task_dstype, task_cols, task_trsfm, task_extrsfm, task_extparms = config.task_ds, config.task_col, config.task_trsfm, config.task_ext_trsfm, config.task_ext_params
-    trsfms = ([] if hasattr(config, 'embed_type') and config.embed_type else task_extrsfm[0]) + (task_trsfm[0] if len(task_trsfm) > 0 else [])
-    trsfms_kwargs = ([] if hasattr(config, 'embed_type') and config.embed_type else ([{'seqlen':args.maxlen, 'xpad_val':task_extparms.setdefault('xpad_val', 0), 'ypad_val':task_extparms.setdefault('ypad_val', None)}] if config.task_type=='nmt' else [{'seqlen':args.maxlen, 'trimlbs':task_extparms.setdefault('trimlbs', False), 'required_special_tkns':['start_tknids', 'clf_tknids', 'delim_tknids'] if task_type in ['entlmnt', 'sentsim'] and (task_extparms.setdefault('sentsim_func', None) is None or not mdl_name.startswith('bert')) else ['start_tknids', 'clf_tknids'], 'special_tkns':special_tknids_args}, task_trsfm_kwargs, {'seqlen':args.maxlen, 'xpad_val':task_extparms.setdefault('xpad_val', 0), 'ypad_val':task_extparms.setdefault('ypad_val', None)}])) + (task_trsfm[1] if len(task_trsfm) >= 2 else [{}] * len(task_trsfm[0]))
-    ds_kwargs = {'sampw':args.sample_weights, 'sampfrac':args.sampfrac}
-    ds_kwargs.update(dict((k, task_extparms[k]) for k in ['origlb', 'locallb', 'lbtxt', 'neglbs', 'reflb', 'sent_mode'] if k in task_extparms))
-    if task_dstype in [OntoDataset]:
-        ds_kwargs['onto_fpath'] = args.onto if args.onto else task_extparms.setdefault('onto_fpath', 'onto.csv')
-        ds_kwargs['onto_col'] = task_cols['ontoid']
-    task_params = dict([(k, getattr(args. k)) if hasattr(args. k) and getattr(args. k) is not None else (k, v) for k, v in task_extparms.setdefault('mdlcfg', {}).items()])
+    # Prepare task related meta data.
+    task_path, task_type, task_dstype, task_cols, task_trsfm, task_extparms = config.input if config.input and os.path.isdir(os.path.join(DATA_PATH, config.input)) else config.task_path, config.task_type, config.task_ds, config.task_col, config.task_trsfm, config.task_ext_params
+    ds_kwargs = config.ds_kwargs
+    config.input = '%s_entlmnt.csv' % orig_task
+    onto_dict = pd.read_csv(config.onto, sep='\t', index_col='id', encoding='utf-8')
+    mltl2entlmnt(config.prvres if config.prvres and os.path.exists(config.prvres) else os.path.join(DATA_PATH, orig_config.task_path, 'test.%s' % config.fmt), onto_dict, out_fpath=config.input, sent_mode=config.sent)
+
+    if config.verbose: logging.debug(config.__dict__)
 
     # Load model
-    clf, prv_optimizer, resume, chckpnt = load_model(args.resume)
-    if args.refresh:
+    clf, prv_optimizer, resume, chckpnt = load_model(config.resume)
+    if config.refresh:
         print('Refreshing and saving the model with newest code...')
         try:
-            save_model(clf, prv_optimizer, '%s_%s.pth' % (args.task, args.model))
+            save_model(clf, prv_optimizer, '%s_%s.pth' % (config.task, config.model))
         except Exception as e:
             print(e)
-    prv_task_params = copy.deepcopy(clf.task_params)
     # Update parameters
-    clf.update_params(task_params=task_params, sample_weights=False)
-    if (use_gpu): clf = _handle_model(clf, dev_id=dev_id, distrb=args.distrb)
+    clf.update_params(task_params=task_extparms['mdlaware'], **config.clf_ext_params)
+    if (use_gpu): clf = _handle_model(clf, dev_id=dev_id, distrb=config.distrb)
     optmzr_cls = config.optmzr if config.optmzr else (torch.optim.Adam, {}, None)
-    optimizer = optmzr_cls[0](clf.parameters(), lr=args.lr, weight_decay=args.wdecay, **optmzr_cls[1]) if args.optim == 'adam' else torch.optim.SGD(clf.parameters(), lr=args.lr, momentum=0.9)
+    optimizer = optmzr_cls[0](clf.parameters(), lr=config.lr, weight_decay=config.wdecay, **optmzr_cls[1]) if config.optim == 'adam' else torch.optim.SGD(clf.parameters(), lr=config.lr, momentum=0.9)
     if prv_optimizer: optimizer.load_state_dict(prv_optimizer.state_dict())
 
     # Prepare test set
-    test_ds = task_dstype(args.input, task_cols['X'], task_cols['y'], config.encode_func, tokenizer, config, sep='\t', index_col=task_cols['index'], binlb=task_extparms['binlb'] if 'binlb' in task_extparms else clf.binlb, transforms=trsfms, transforms_kwargs=trsfms_kwargs, **ds_kwargs)
-    if mdl_name == 'bert': test_ds = MaskedLMDataset(test_ds)
-    test_loader = DataLoader(test_ds, batch_size=args.bsize, shuffle=False, num_workers=args.np)
+    test_ds = task_dstype(config.input, tokenizer, config, ds_name='test', binlb=task_extparms['binlb'] if 'binlb' in task_extparms and type(task_extparms['binlb']) is not str else clf.binlb, **ds_kwargs)
+    test_loader = DataLoader(test_ds, batch_size=config.bsize, shuffle=False, num_workers=config.np)
 
     # Evaluation
-    if args.traindev:
-        dev_ds = task_dstype(args.input, task_cols['X'], task_cols['y'], config.encode_func, tokenizer, config, sep='\t', index_col=task_cols['index'], binlb=task_extparms['binlb'] if 'binlb' in task_extparms else clf.binlb, transforms=trsfms, transforms_kwargs=trsfms_kwargs, **ds_kwargs)
-        training_steps = int(len(v) / args.bsize) if hasattr(dev_ds, '__len__') else args.trainsteps
-        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=int(args.wrmprop*training_steps), num_training_steps=training_steps) if not args.noschdlr and len(optmzr_cls) > 2 and optmzr_cls[2] and optmzr_cls[2] == 'linwarm' else None
-        if (not args.distrb or args.distrb and hvd.rank() == 0): print((optimizer, scheduler))
-        if mdl_name == 'bert': dev_ds = MaskedLMDataset(dev_ds)
-        dev_loader = DataLoader(dev_ds, batch_size=args.bsize, shuffle=False, num_workers=args.np)
-        eval(clf, dev_loader, config, dev_ds.binlbr, special_tknids_args, pad_val=task_extparms.setdefault('xpad_val', 0), task_type=task_type, task_name=args.task, ds_name='dev', mdl_name=args.model, use_gpu=use_gpu, devq=dev_id, distrb=args.distrb, ignored_label=task_extparms.setdefault('ignored_label', None))
-        train(clf, optimizer, dev_loader, special_tknids_args, scheduler=scheduler, pad_val=task_extparms.setdefault('xpad_val', 0), weights=class_weights, lmcoef=args.lmcoef, clipmaxn=args.clipmaxn, epochs=args.epochs, earlystop=args.earlystop, earlystop_delta=args.es_delta, earlystop_patience=args.es_patience, task_type=task_type, task_name=args.task, mdl_name=args.model, use_gpu=use_gpu, devq=dev_id, distrb=args.distrb)
-    eval(clf, test_loader, config, test_ds.binlbr, special_tknids_args, pad_val=task_extparms.setdefault('xpad_val', 0), task_type=task_type, task_name=args.task, ds_name='test', mdl_name=args.model, use_gpu=use_gpu, devq=dev_id, distrb=args.distrb, ignored_label=task_extparms.setdefault('ignored_label', None))
+    if config.traindev:
+        dev_ds = task_dstype(config.input, tokenizer, config, ds_name='dev', binlb=task_extparms['binlb'] if 'binlb' in task_extparms and type(task_extparms['binlb']) is not str else clf.binlb, **ds_kwargs)
+        training_steps = int(len(v) / config.bsize) if hasattr(dev_ds, '__len__') else config.trainsteps
+        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=config.wrmprop, num_training_steps=training_steps) if not config.noschdlr and len(optmzr_cls) > 2 and optmzr_cls[2] and optmzr_cls[2] == 'linwarm' else None
+        if (not config.distrb or config.distrb and hvd.rank() == 0): print((optimizer, scheduler))
+        dev_loader = DataLoader(dev_ds, batch_size=config.bsize, shuffle=False, num_workers=config.np)
+        eval(clf, dev_loader, config, ds_name='dev', use_gpu=use_gpu, devq=dev_id, distrb=config.distrb, ignored_label=task_extparms.setdefault('ignored_label', None))
+        train(clf, optimizer, dev_loader, config, scheduler, weights=class_weights, lmcoef=config.lmcoef, clipmaxn=config.clipmaxn, epochs=config.epochs, earlystop=config.earlystop, earlystop_delta=config.es_delta, earlystop_patience=config.es_patience, use_gpu=use_gpu, devq=dev_id, distrb=config.distrb, resume=resume if config.resume else {})
+    eval(clf, test_loader, config, ds_name='test', use_gpu=use_gpu, devq=dev_id, distrb=config.distrb, ignored_label=task_extparms.setdefault('ignored_label', None))
     os.rename('pred_test.csv', '%s_entlmnt_pred.csv' % orig_task)
-    ref_df = pd.read_csv(args.prvres if args.prvres and os.path.exists(args.prvres) else os.path.join(DATA_PATH, orig_config.task_path, 'test.%s' % args.fmt), sep='\t', dtype={'id':object}, encoding='utf-8')
+    ref_df = pd.read_csv(config.prvres if config.prvres and os.path.exists(config.prvres) else os.path.join(DATA_PATH, orig_config.task_path, 'test.%s' % config.fmt), sep='\t', dtype={'id':object}, encoding='utf-8')
     entlmnt2mltl('%s_entlmnt_pred.csv' % orig_task, ref_df, onto_dict, out_fpath='%s_rerank_pred_test.csv' % orig_task, idx_num_underline=NUM_UNDERLINE_IN_ORIG[orig_task])
 
 
 def main():
     predefined_tasks = ['biolarkgsc', 'copd', 'biolarkgsc_entilement', 'copd_entilement', 'hpo_entilement']
     if any(args.task == t for t in ['biolarkgsc_entilement', 'copd_entilement', 'hpo_entilement']):
-        if args.method != 'train':
+        if args.method != 'train' or args.method != 'fine-tune':
             print('Running in training mode instead ...')
         main_func = classify
     elif any(args.task == t for t in ['biolarkgsc', 'copd']):
@@ -328,8 +223,13 @@ if __name__ == '__main__':
     parser.add_argument('--distrb', default=False, action='store_true', dest='distrb', help='whether to distribute data over multiple devices')
     parser.add_argument('--distbknd', default='nccl', action='store', dest='distbknd', help='distribute framework backend')
     parser.add_argument('--disturl', default='env://', action='store', dest='disturl', help='distribute framework url')
+    parser.add_argument('--traindev', default=False, action='store_true', help='whether to use dev dataset for training')
+    parser.add_argument('--noeval', default=False, action='store_true', help='whether to train only')
+    parser.add_argument('--noschdlr', default=False, action='store_true', help='force to not use scheduler whatever the default setting is')
     parser.add_argument('--maxlen', default=128, action='store', type=int, dest='maxlen', help='indicate the maximum sequence length for each samples')
     parser.add_argument('--maxtrial', default=50, action='store', type=int, dest='maxtrial', help='maximum time to try')
+    parser.add_argument('--droplast', default=False, action='store_true', help='whether to drop the last incompleted batch')
+    parser.add_argument('--weight_class', default=False, action='store_true', help='whether to drop the last incompleted batch')
     parser.add_argument('--clswfac', default='1', type=str, help='whether to drop the last incompleted batch')
     parser.add_argument('--bert_outlayer', default='-1', type=str, dest='output_layer', help='indicate which layer to be the output of BERT model')
     parser.add_argument('--resume', action='store', dest='resume', help='resume training model file')
@@ -354,9 +254,10 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
     # Update config
+    global_vars = globals()
     cfg_kwargs = {} if args.cfg is None else ast.literal_eval(args.cfg)
     args.cfg = cfg_kwargs
-    _update_cfgs(globals(), cfg_kwargs)
+    _update_cfgs(global_vars, cfg_kwargs)
 
     # GPU setting
     if (args.gpuq is not None and not args.gpuq.strip().isspace()):
