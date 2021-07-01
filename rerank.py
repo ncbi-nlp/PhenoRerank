@@ -59,7 +59,8 @@ def classify(dev_id=None):
         class_weights = torch.Tensor(1.0 / class_count)
         class_weights /= class_weights.sum()
         class_weights *= (args.clswfac[min(len(args.clswfac)-1, i)] if type(args.clswfac) is list else args.clswfac)
-        sampler = WeightedRandomSampler(weights=class_weights, num_samples=config.bsize, replacement=True)
+        sampler = None # WeightedRandomSampler does not work in new version
+        # sampler = WeightedRandomSampler(weights=class_weights, num_samples=config.bsize, replacement=True)
         if not config.distrb and type(dev_id) is list: class_weights = class_weights.repeat(len(dev_id))
 
     # Partition dataset among workers using DistributedSampler
