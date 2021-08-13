@@ -11,7 +11,6 @@ from torch.utils.data.sampler import WeightedRandomSampler
 from transformers import get_linear_schedule_with_warmup
 
 from util.config import *
-from util.dataset import OntoDataset
 from util.processor import _adjust_encoder
 from util.trainer import train, eval
 from util.common import _update_cfgs, param_reader, write_json, read_json, gen_mdl, gen_clf, _handle_model, save_model, load_model, seqmatch, mltl2entlmnt, entlmnt2mltl
