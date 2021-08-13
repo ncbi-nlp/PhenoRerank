@@ -1,0 +1,162 @@
+{
+    "cache": ".cache",
+    "cfg": {},
+    "model": "import://util.modules/SpaceMap",
+    "clf_ext_params": {
+        "do_crf": false,
+        "do_drop": null,
+        "do_extlin": false,
+        "do_lastdrop": false,
+        "do_norm": true,
+        "extfc": false,
+        "fchdim": 0,
+        "iactvtn": "relu",
+        "initln": true,
+        "initln_mean": 0.0,
+        "initln_std": 0.02,
+        "lm_loss": false,
+        "norm_type": "batch",
+        "oactvtn": "sigmoid",
+        "pdrop": 0.1,
+        "sample_weights": false
+    },
+    "clswfac": 1.0,
+    "cnstrnts": null,
+    "common_cfg": {
+        "mdl_cfg": "mdlcfg"
+    },
+    "concat_strategy": null,
+    "configfmt": "json",
+    "crsdev": false,
+    "dfsep": "\t",
+    "do_bm25": false,
+    "do_chartfidf": false,
+    "do_crf": false,
+    "do_drop": null,
+    "do_extlin": false,
+    "do_lastdrop": false,
+    "do_norm": true,
+    "do_tfidf": false,
+    "do_thrshld": false,
+    "droplast": false,
+    "ds_kwargs": {
+        "onto_col": "label2",
+        "onto_fpath": "../hpo_labels.csv",
+        "sampfrac": null,
+        "sampw": true
+    },
+    "earlystop": true,
+    "embed_type": null,
+    "encode_func": "import://util.processor/_base_encode",
+    "es_delta": 0.005,
+    "es_patience": 5,
+    "extfc": null,
+    "fchdim": 0,
+    "fmt": "csv",
+    "iactvtn": "relu",
+    "importlibs": "",
+    "initln": true,
+    "initln_mean": 0.0,
+    "initln_std": 0.02,
+    "input": null,
+    "input_keys": [
+        "input_ids",
+        "attention_mask",
+        "onto_id"
+    ],
+    "kfold": 10,
+    "lm_config": "import://transformers.models.bert.configuration_bert/BertConfig",
+    "lm_loss": false,
+    "lm_mdl_name": "bert-base-uncased",
+    "lm_model": "import://transformers.models.bert.modeling_bert/BertModel",
+    "lm_params": "BERT",
+    "lmcoef": 0.5,
+    "lr": 0.0002,
+    "maxlen": 384,
+    "mdl_trsfm": [
+        [
+            "import://util.processor/_base_transform"
+        ],
+        [
+            {
+                "input_keys": [
+                    "input_ids",
+                    "attention_mask"
+                ]
+            }
+        ]
+    ],
+    "method": "classify",
+    "model": "bert_onto",
+    "noeval": false,
+    "norm_type": "batch",
+    "noschdlr": false,
+    "oactvtn": "sigmoid",
+    "omp": false,
+    "onto": "../hpo_labels.csv",
+    "onto_df": "import://pandas.core.frame/DataFrame",
+    "optim": "adam",
+    "optmzr": [
+        "import://transformers.optimization/AdamW",
+        {
+            "correct_bias": false
+        },
+        "linwarm"
+    ],
+    "output_layer": -1,
+    "pdrop": 0.1,
+    "pooler": "none",
+    "pretrained": "true",
+    "pthrshld": 0.5,
+    "refresh": false,
+    "resume": null,
+    "sampfrac": null,
+    "sample_weights": false,
+    "sc": ";;",
+    "sentsim_func": null,
+    "shell": "",
+    "skip_paths": "",
+    "task": "hpo_entilement",
+    "task_col": {
+        "X": [
+            "text1",
+            "onto"
+        ],
+        "index": "id",
+        "ontoid": "label2",
+        "y": "label"
+    },
+    "task_ds": "import://util.dataset/OntoDataset",
+    "task_ext_params": {
+        "mdlaware": {
+            "concat_strategy": null,
+            "sentsim_func": null
+        },
+        "mltl": false
+    },
+    "task_path": "hpo.entlmnt",
+    "task_trsfm": [
+        [
+            "_mltc_transform"
+        ],
+        [
+            {}
+        ]
+    ],
+    "task_type": "entlmnt",
+    "tknz_kwargs": {
+        "max_length": 384,
+        "padding": "max_length",
+        "truncation": "only_first"
+    },
+    "tknzr": "import://transformers.models.bert.tokenization_bert/BertTokenizer",
+    "topk": 5,
+    "traindev": false,
+    "trainsteps": 1000,
+    "verbose": false,
+    "wdecay": 1e-05,
+    "weight_class": false,
+    "wrmprop": 0.1,
+    "wsdir": "/home/yans2/source/py/bionlpsota",
+    "ymode": "sim"
+}
