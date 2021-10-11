@@ -24,7 +24,7 @@ Firstly, you need to install a Python Interpreter (tested 3.6.10) and the follow
 Follow the guidelines to get the API keys for [NCBO](http://www.bioontology.org/wiki/index.php/BioPortal_Help#Getting_an_API_key) and [TrackHealth](https://track.health/api/). Then assign to the `API_KEY` global variable in the wrapper `util/ncbo.py` and `util/trkhealth.py`.
 
 ### Locate the Pre-Generated Dataset
-After cloning the repository and configuring the programs, you can download the pre-generated datasets [here](https://) .
+After cloning the repository and configuring the programs, you can download the pre-generated datasets and pre-trained model [here](https://www.doi.org/10.17632/v4t59p8w4z).
 
 Filename | Description  
 --- | ---
@@ -71,4 +71,5 @@ You can re-generate the dataset from the annotations of [BiolarkGSC+](https://gi
 
 ```bash
 python gendata.py -u biolarkgsc
+python gendata.py -u copd
 ```
