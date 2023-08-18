@@ -4,18 +4,9 @@ from collections import OrderedDict
 import numpy as np
 import pandas as pd
 
-import ftfy, spacy
-try:
-    nlp = spacy.load('en_core_sci_md')
-except Exception as e:
-    print(e)
-    try:
-        nlp = spacy.load('en_core_sci_sm')
-    except Exception as e:
-        print(e)
-        nlp = spacy.load('en_core_web_sm')
+import ftfy
 
-from . import common
+from . import common, processor
 
 if sys.platform.startswith('win32'):
 	DATA_PATH = 'D:\\data\\ontolib\\store'
@@ -102,8 +93,12 @@ class Wrapper():
 		return result, error
 
 	def raw_parse(self, text, src=[]):
-		doc = nlp(ftfy.fix_text(text).encode('ascii', 'replace').decode('ascii'))
-		sents, sent_offset = zip(*[(str(sent), sent[0].idx) for sent in doc.sents])
+		if processor.NLPLIB == 'nltk':
+			sents, sent_locs = processor.tokenize(text, model='sent', ret_loc=True)
+			sent_offset = [x[0] for x in sent_locs]
+		elif processor.NLPLIB == 'spacy':
+			doc = processor.nlp(ftfy.fix_text(text).encode('ascii', 'replace').decode('ascii'))
+			sents, sent_offset = zip(*[(str(sent), sent[0].idx) for sent in doc.sents])
 		return self._post_process(sent_offset, *self.mm.extract_concepts(sents, range(1, len(sents) + 1), restrict_to_sources=src))
 
 	def parse(self, tokens):

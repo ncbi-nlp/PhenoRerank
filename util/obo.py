@@ -70,13 +70,13 @@ def output_reader(fpath):
 	with open(fpath, 'r') as fd:
 		for line in fd.readlines():
 			if line=='\n':
-			    record_id = None
+				record_id = None
 			elif record_id is None:
-			    record_id = line.strip('\n')
-			    res[record_id] = []
+				record_id = line.strip('\n')
+				res[record_id] = []
 			else:
-			    record = line.strip('\n').split('\t')
-			    res[record_id].append((onto_prefix+record[0], record[1], (int(record[2]), int(record[3]))))
+				record = line.strip('\n').split('\t')
+				res[record_id].append((onto_prefix+record[0], record[1], (int(record[2]), int(record[3]))))
 	return res
 
 

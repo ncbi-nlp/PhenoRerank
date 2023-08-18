@@ -15,7 +15,7 @@ fi
 
 # ClinPhen
 if [ ! -d "clinphen" ]; then
-	git clone https://dawnyesky@bitbucket.org/bejerano/clinphen.git
+	git clone https://bitbucket.org/bejerano/clinphen.git
 fi
 
 # NeuralCR
@@ -30,4 +30,5 @@ export OBO_HOME=$(pwd)/ext/OBOAnnotatorNoGUI/dist
 export CLASSPATH=\$OBO_HOME/OBOAnnotatorNoGUI.jar:$CLASSPATH
 export PYTHONPATH=$(pwd)/ext/clinphen:$PYTHONPATH
 export PYTHONPATH=$(pwd)/ext/NeuralCR:$PYTHONPATH
+export NCR_SRC=$(pwd)/ext/NeuralCR
 " >> ~/.bashrc

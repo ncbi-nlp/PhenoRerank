@@ -6,8 +6,6 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from allennlp.modules.conditional_random_field import ConditionalRandomField
-
 from transformers.models.bert.modeling_bert import BertOnlyMLMHead
 
 
@@ -36,7 +34,11 @@ class BaseClfHead(nn.Module):
         self.dropout = nn.Dropout2d(pdrop) if self.task_type == 'nmt' else nn.Dropout(pdrop)
         self.last_dropout = nn.Dropout(pdrop) if self.do_lastdrop else None
         do_crf = kwargs.setdefault('do_crf', config.do_crf if hasattr(config, 'do_crf') else False)
-        self.crf = ConditionalRandomField(num_lbs) if do_crf else None
+        if do_crf:
+            from allennlp.modules.conditional_random_field import ConditionalRandomField
+            self.crf = ConditionalRandomField(num_lbs)
+        else:
+            self.crf = None
         constraints = kwargs.setdefault('cnstrnts', config.cnstrnts.split(',') if hasattr(config, 'cnstrnts') and config.cnstrnts else [])
         self.constraints = [cnstrnt_cls(**cnstrnt_params) for cnstrnt_cls, cnstrnt_params in constraints]
         do_thrshld = kwargs.setdefault('do_thrshld', config.do_thrshld if hasattr(config, 'do_thrshld') else False)

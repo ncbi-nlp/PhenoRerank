@@ -4,17 +4,66 @@ import numpy as np
 
 import torch
 
-import ftfy, spacy
-try:
-    nlp = spacy.load('en_core_sci_md')
-except Exception as e:
-    logging.warning(e)
-    try:
-        nlp = spacy.load('en_core_sci_sm')
-    except Exception as e:
-        logging.warning(e)
-        nlp = spacy.load('en_core_web_sm')
+import ftfy
 
+NLPLIB = os.environ.setdefault('NLPLIB', 'nltk')
+
+
+def init_nlplib(nlplib='nltk'):
+    if nlplib == 'nltk':
+        NLPLIB = 'nltk'
+    elif nlplib == 'spacy':
+        import spacy
+        global nlp
+        try:
+            nlp = spacy.load('en_core_sci_md')
+        except Exception as e:
+            print(e)
+            try:
+                nlp = spacy.load('en_core_sci_sm')
+            except Exception as e:
+                print(e)
+                nlp = spacy.load('en_core_web_sm')
+        NLPLIB = 'spacy'
+
+def find_location(text, tokens):
+	offset, location = 0, []
+	for t in tokens:
+		new_offset = text.find(t, offset)
+		if (new_offset == -1):
+			location.append((-1, -1))
+		else:
+			offset = new_offset
+			location.append((offset, offset + len(t)))
+	return location
+
+def tokenize(text, model='word', ret_loc=False, **kwargs):
+    import nltk
+    if (model == 'casual'):
+        tokens = nltk.tokenize.casual.casual_tokenize(text, **kwargs)
+    elif (model == 'mwe'):
+        tknzr = nltk.tokenize.MWETokenizer(mwes, separator='_')	# mwes should look like "[('a', 'little'), ('a', 'little', 'bit')]"
+        tokens = tknzr.tokenize(text.split())
+    elif (model == 'stanford'):
+        tknzr = nltk.tokenize.StanfordTokenizer(**kwargs)
+        tokens = tknzr.tokenize(text)
+    elif (model == 'treebank'):
+        tknzr = nltk.tokenize.TreebankWordTokenizer()
+        tokens = tknzr.tokenize(text)
+    elif (model == 'sent'):
+        tokens = nltk.tokenize.sent_tokenize(text, **kwargs)
+    elif (model == 'word'):
+        tokens = nltk.tokenize.word_tokenize(text, **kwargs)
+    if (ret_loc):
+        if model=='sent':
+            sent_lens = np.cumsum([0]+[len(s) for s in tokens])
+            return (tokens, list(zip(sent_lens[:-1], sent_lens[1:])))
+        else:
+            return tokens, find_location(text, tokens)
+    return tokens
+
+def span_tokenize(text):
+	return list(nltk.tokenize.WhitespaceTokenizer().span_tokenize(text))
 
 def _base_transform(sample, input_keys=[]):
     X, y = sample

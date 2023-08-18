@@ -5,7 +5,7 @@ import pandas as pd
 
 import ftfy
 
-SRC_PATH = os.path.join(os.path.expanduser("~"), 'source', 'py', 'NeuralCR')
+SRC_PATH = os.environ.setdefault('NCR_SRC', os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'ext', 'NeuralCR')))
 sys.path.append(SRC_PATH)
 import ncrmodel
 

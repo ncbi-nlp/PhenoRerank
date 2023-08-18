@@ -5,12 +5,12 @@ import numpy as np
 import pandas as pd
 
 sys.path.append(os.path.dirname(os.path.realpath(__file__)))
-from util import common, obo, ncbo, monainit, doc2hpo, metamap, clinphen, trkhealth
+from util import common, processor, obo, ncbo, monainit, doc2hpo, metamap, trkhealth
 
 import urllib3
 urllib3.disable_warnings()
 
-MODULES_MAP = {'obo':obo, 'ncbo':ncbo, 'monainit':monainit, 'doc2hpo':doc2hpo, 'metamap':metamap, 'clinphen':clinphen, 'trkhealth':trkhealth}
+MODULES_MAP = {'obo':obo, 'ncbo':ncbo, 'monainit':monainit, 'doc2hpo':doc2hpo, 'metamap':metamap, 'trkhealth':trkhealth}
 ANNOT_KWARGS = {'monainit': {'includeAcronym':'true', 'includeCat':'phenotype'}}
 
 args = {}
@@ -63,14 +63,25 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Evaluate different annotator on various datasets.')
     parser.add_argument('annotator', choices=['obo', 'ncbo', 'monainit', 'doc2hpo', 'metamap', 'clinphen', 'ncr', 'trkhealth'], help='name of the annotator')
     parser.add_argument('dataset', choices=['biolarkgsc', 'copd'], help='path of the dataset file')
+    parser.add_argument('-x', '--nlplib', choices=['nltk', 'spacy'], help='library for natural language processing')
     parser.add_argument('-i', '--input', default='./data', help='folder path that contains the dataset file')
     parser.add_argument('-l', '--withloc', default=False, action='store_true', help='whether annotate the mention location')
     parser.add_argument('-v', '--verbose', default=False, action='store_true', help='display detailed information')
+    parser.add_argument('--ncboapikey', help='API key for NCBO annotator')
     args = parser.parse_args()
 
     # Delayed import to speedup script loading
-    if args.annotator == 'ncr':
+    if args.annotator == 'ncbo':
+        ncbo.API_KEY = args.ncboapikey if args.ncboapikey else os.environ.setdefault('NCBO_APIKEY', '')
+    elif args.annotator == 'clinphen':
+        from util import clinphen
+        MODULES_MAP['clinphen'] = clinphen
+    elif args.annotator == 'ncr':
         from util import ncr
         MODULES_MAP['ncr'] = ncr
+
+    # Configure NLP library
+    args.nlplib = args.nlplib if args.nlplib else os.environ.setdefault('NLPLIB', 'nltk')
+    processor.init_nlplib(args.nlplib)
 
     main()

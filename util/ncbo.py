@@ -9,7 +9,7 @@ if sys.platform.startswith('win32'):
 elif sys.platform.startswith('linux'):
 	DATA_PATH = os.path.join(os.path.expanduser('~'), 'data', 'bionlp')
 ANT_PATH = os.path.join(DATA_PATH, 'ncbo')
-API_KEY = ''
+API_KEY = os.environ.setdefault('NCBO_APIKEY', '')
 SC=';;'
 
 

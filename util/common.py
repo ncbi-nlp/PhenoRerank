@@ -10,9 +10,6 @@ import pandas as pd
 import torch
 from torch import nn
 
-from allennlp.modules.seq2vec_encoders import PytorchSeq2VecWrapper
-from allennlp.modules.seq2seq_encoders import PytorchSeq2SeqWrapper
-
 from .dataset import DataParallel
 
 LB_SEP = ';'
@@ -199,13 +196,6 @@ def cfg_reader(fpath):
 			print(('Parameters of function %s does not exist.' % func))
 			return {}
 	return get_params
-
-
-def gen_pytorch_wrapper(mdl_type, mdl_name, **kwargs):
-    from . import config as C
-    wrapper_cls = PytorchSeq2SeqWrapper if mdl_type == 'seq2seq' else PytorchSeq2VecWrapper
-    mdl_cls = C.PYTORCH_WRAPPER[mdl_name]
-    return wrapper_cls(module=mdl_cls(**kwargs))
 
 
 def gen_mdl(config, use_gpu=False, distrb=False, dev_id=None):

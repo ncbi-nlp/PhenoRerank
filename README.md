@@ -8,12 +8,13 @@ The following instructions will help you setup the programs as well as the datas
 ### Prerequisities
 Firstly, you need to install a Python Interpreter (tested 3.6.10) and the following packages:
 * numpy (tested 1.18.5)
+* scipy (tested 1.8.0)
 * pandas (tested 1.0.5)
 * ftfy (tested 5.7)
 * apiclient (tested 1.0.4)
-* pymetamap (tested 0.2)
-* clinphen (tested 1.28)
-* rdflib \[optional\] \(tested 4.2.2\)
+* pyyaml (tested 6.0.1)
+* pymetamap \[optional\] (tested 0.1)
+* clinphen \[optional\] (tested 1.28)
 
 ### Download the external programs
 * Run the script `install.sh` to download and configure the external programs for benchmark.
