@@ -1,7 +1,6 @@
 {
     "cache": ".cache",
     "cfg": {},
-    "model": "import://util.modules/SpaceMap",
     "clf_ext_params": {
         "do_crf": false,
         "do_drop": null,
@@ -157,6 +156,6 @@
     "wdecay": 1e-05,
     "weight_class": false,
     "wrmprop": 0.1,
-    "wsdir": "/home/yans2/source/py/bionlpsota",
+    "wsdir": "~/sources/python/PhenoRerank",
     "ymode": "sim"
 }

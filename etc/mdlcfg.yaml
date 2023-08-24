@@ -1,8 +1,8 @@
 LM:
 - name: BERT
   params:
-    pretrained_mdl_path: /home/yans2/data/lm/bert/base-uncased
-    pretrained_vocab_path: /home/yans2/data/lm/bert/base-uncased
+    pretrained_mdl_path: ~/data/huggingface/bert-base-uncased
+    pretrained_vocab_path: ~/data/huggingface/bert-base-uncased
     hidden_size: 768
     # hidden_size: 1024
     num_hidden_layers: 12
@@ -19,8 +19,8 @@ LM:
     vocab_size_or_config_json_file: 30522
 - name: GPT-2
   params:
-    pretrained_mdl_path: /home/yans2/data/lm/gpt2/webtext
-    pretrained_vocab_path: /home/yans2/data/lm/gpt2/webtext
+    pretrained_mdl_path: ~/data/huggingface/gpt2/webtext
+    pretrained_vocab_path: ~/data/huggingface/gpt2/webtext
     n_positions: 1024
     n_ctx: 1024
     n_embd: 768
@@ -31,8 +31,8 @@ LM:
     vocab_size_or_config_json_file: 50257
 - name: GPT
   params:
-    pretrained_mdl_path: ~/data/lm/gpt/archive.tar.gz
-    pretrained_vocab_path: ~/data/lm/gpt/vocab.txt
+    pretrained_mdl_path: ~/data/huggingface/gpt/archive.tar.gz
+    pretrained_vocab_path: ~/data/huggingface/gpt/vocab.txt
     n_special: 0
     n_positions: 512
     n_ctx: 512
@@ -75,15 +75,15 @@ LM:
     proj_init_std: 0.01
     init_std: 0.02
     vocab_size_or_config_json_file: 40478
-- name: ELMo
+- name: elmo
   params:
-    options_path: ~/data/lm/elmo/pubmed/elmo_2x4096_512_2048cnn_2xhighway_options.json
-    weights_path: ~/data/lm/elmo/pubmed/elmo_2x4096_512_2048cnn_2xhighway_weights_PubMed_only.hdf5
-    # options_path: ~/data/lm/elmo/bioelmo/biomed_elmo_options.json
-    # weights_path: ~/data/lm/elmo/bioelmo/biomed_elmo_weights.hdf5
-    # options_path: ~/data/lm/elmo/mimic/elmo_mimic3_20k_options.json
-    # weights_path: ~/data/lm/elmo/mimic/elmo_mimic3_20k_weights.hdf5
-    # options_path: ~/data/lm/elmo/mimic/elmo_mimic3_300k_options.json
-    # weights_path: ~/data/lm/elmo/mimic/elmo_mimic3_300k_weights.hdf5
+    options_path: ~/data/huggingface/elmo/pubmed/elmo_2x4096_512_2048cnn_2xhighway_options.json
+    weights_path: ~/data/huggingface/elmo/pubmed/elmo_2x4096_512_2048cnn_2xhighway_weights_PubMed_only.hdf5
+    # options_path: ~/data/huggingface/elmo/bioelmo/biomed_elmo_options.json
+    # weights_path: ~/data/huggingface/elmo/bioelmo/biomed_elmo_weights.hdf5
+    # options_path: ~/data/huggingface/elmo/mimic/elmo_mimic3_20k_options.json
+    # weights_path: ~/data/huggingface/elmo/mimic/elmo_mimic3_20k_weights.hdf5
+    # options_path: ~/data/huggingface/elmo/mimic/elmo_mimic3_300k_options.json
+    # weights_path: ~/data/huggingface/elmo/mimic/elmo_mimic3_300k_weights.hdf5
     elmoedim: 1024
     dropout: 0.5

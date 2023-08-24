@@ -1,0 +1,38 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "PhenoRerank_benchmark",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "args": ["doc2hpo", "biolarkgsc"],
+            "cwd": "${fileDirname}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "PhenoRerank_rerank",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "args": ["-c", "{'config':'${fileDirname}/etc/config.json'}", "--model", "bert_onto", "-u", "biolarkgsc", "--onto", "${fileDirname}/data/hpo_dict.csv", "--resume", "${fileDirname}/data/hpo_biolarkgsc_bert_onto.pth", "--prvres", "${fileDirname}/biolarkgsc_clinphen_preds.csv"],
+            "cwd": "${fileDirname}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "PhenoRerank_eval",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "args": [],
+            "cwd": "${fileDirname}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

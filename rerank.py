@@ -57,7 +57,7 @@ def classify(dev_id=None):
     else:
         class_weights = torch.Tensor(1.0 / class_count)
         class_weights /= class_weights.sum()
-        class_weights *= (args.clswfac[min(len(args.clswfac)-1, i)] if type(args.clswfac) is list else args.clswfac)
+        class_weights *= (args.clswfac[min(len(args.clswfac)-1, 1)] if type(args.clswfac) is list else args.clswfac)
         sampler = None # WeightedRandomSampler does not work in new version
         # sampler = WeightedRandomSampler(weights=class_weights, num_samples=config.bsize, replacement=True)
         if not config.distrb and type(dev_id) is list: class_weights = class_weights.repeat(len(dev_id))
@@ -78,7 +78,7 @@ def classify(dev_id=None):
         if config.refresh:
             logging.info('Refreshing and saving the model with newest code...')
             try:
-                if (not distrb or distrb and hvd.rank() == 0):
+                if (not config.distrb or config.distrb and hvd.rank() == 0):
                     save_model(clf, prv_optimizer, '%s_%s.pth' % (config.task, config.model))
             except Exception as e:
                 logging.warning(e)
@@ -152,7 +152,7 @@ def rerank(dev_id=None):
     ds_kwargs = config.ds_kwargs
     config.input = '%s_entlmnt.csv' % orig_task
     onto_dict = pd.read_csv(config.onto, sep='\t', index_col='id', encoding='utf-8')
-    mltl2entlmnt(config.prvres if config.prvres and os.path.exists(config.prvres) else os.path.join(DATA_PATH, orig_config.task_path, 'test.%s' % config.fmt), onto_dict, out_fpath=config.input, sent_mode=config.sent)
+    mltl2entlmnt(config.prvres if config.prvres and os.path.exists(config.prvres) else os.path.join(DATA_PATH, config.task_path, 'test.%s' % config.fmt), onto_dict, out_fpath=config.input, sent_mode=config.sent)
 
     if config.verbose: logging.debug(config.__dict__)
 
@@ -178,15 +178,15 @@ def rerank(dev_id=None):
     # Evaluation
     if config.traindev:
         dev_ds = task_dstype(config.input, tokenizer, config, ds_name='dev', binlb=task_extparms['binlb'] if 'binlb' in task_extparms and type(task_extparms['binlb']) is not str else clf.binlb, **ds_kwargs)
-        training_steps = int(len(v) / config.bsize) if hasattr(dev_ds, '__len__') else config.trainsteps
+        training_steps = int(len(dev_ds) / config.bsize) if hasattr(dev_ds, '__len__') else config.trainsteps
         scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=config.wrmprop, num_training_steps=training_steps) if not config.noschdlr and len(optmzr_cls) > 2 and optmzr_cls[2] and optmzr_cls[2] == 'linwarm' else None
         if (not config.distrb or config.distrb and hvd.rank() == 0): print((optimizer, scheduler))
         dev_loader = DataLoader(dev_ds, batch_size=config.bsize, shuffle=False, num_workers=config.np)
         eval(clf, dev_loader, config, ds_name='dev', use_gpu=use_gpu, devq=dev_id, distrb=config.distrb, ignored_label=task_extparms.setdefault('ignored_label', None))
-        train(clf, optimizer, dev_loader, config, scheduler, weights=class_weights, lmcoef=config.lmcoef, clipmaxn=config.clipmaxn, epochs=config.epochs, earlystop=config.earlystop, earlystop_delta=config.es_delta, earlystop_patience=config.es_patience, use_gpu=use_gpu, devq=dev_id, distrb=config.distrb, resume=resume if config.resume else {})
+        train(clf, optimizer, dev_loader, config, scheduler, weights=config.class_weights, lmcoef=config.lmcoef, clipmaxn=config.clipmaxn, epochs=config.epochs, earlystop=config.earlystop, earlystop_delta=config.es_delta, earlystop_patience=config.es_patience, use_gpu=use_gpu, devq=dev_id, distrb=config.distrb, resume=resume if config.resume else {})
     eval(clf, test_loader, config, ds_name='test', use_gpu=use_gpu, devq=dev_id, distrb=config.distrb, ignored_label=task_extparms.setdefault('ignored_label', None))
     os.rename('pred_test.csv', '%s_entlmnt_pred.csv' % orig_task)
-    ref_df = pd.read_csv(config.prvres if config.prvres and os.path.exists(config.prvres) else os.path.join(DATA_PATH, orig_config.task_path, 'test.%s' % config.fmt), sep='\t', dtype={'id':object}, encoding='utf-8')
+    ref_df = pd.read_csv(config.prvres if config.prvres and os.path.exists(config.prvres) else os.path.join(DATA_PATH, config.task_path, 'test.%s' % config.fmt), sep='\t', dtype={'id':object}, encoding='utf-8')
     entlmnt2mltl('%s_entlmnt_pred.csv' % orig_task, ref_df, onto_dict, out_fpath='%s_rerank_pred_test.csv' % orig_task, idx_num_underline=NUM_UNDERLINE_IN_ORIG[orig_task])
 
 
@@ -261,7 +261,7 @@ if __name__ == '__main__':
 
     # GPU setting
     if (args.gpuq is not None and not args.gpuq.strip().isspace()):
-    	args.gpuq = list(range(torch.cuda.device_count())) if (args.gpuq == 'auto' or args.gpuq == 'all') else [int(x) for x in args.gpuq.split(',') if x]
+        args.gpuq = list(range(torch.cuda.device_count())) if (args.gpuq == 'auto' or args.gpuq == 'all') else [int(x) for x in args.gpuq.split(',') if x]
     elif (args.gpunum > 0):
         args.gpuq = list(range(args.gpunum))
     else:

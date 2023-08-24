@@ -62,7 +62,7 @@ if __name__ == '__main__':
     # Parse commandline arguments
     parser = argparse.ArgumentParser(description='Evaluate different annotator on various datasets.')
     parser.add_argument('annotator', choices=['obo', 'ncbo', 'monainit', 'doc2hpo', 'metamap', 'clinphen', 'ncr', 'trkhealth'], help='name of the annotator')
-    parser.add_argument('dataset', choices=['biolarkgsc', 'copd'], help='path of the dataset file')
+    parser.add_argument('dataset', choices=['biolarkgsc', 'copd'], help='dataset name')
     parser.add_argument('-x', '--nlplib', choices=['nltk', 'spacy'], help='library for natural language processing')
     parser.add_argument('-i', '--input', default='./data', help='folder path that contains the dataset file')
     parser.add_argument('-l', '--withloc', default=False, action='store_true', help='whether annotate the mention location')
