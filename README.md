@@ -56,7 +56,7 @@ python rerank.py --model bert_onto -u biolarkgsc --onto hpo_labels.csv --resume 
 ## Evaluation
 Once the prediction files are ready, please rename them appropriately. Then you can evaluate the results for comparison using the following commands.
 ```bash
-python eval.py method1.csv method2.csv method3.csv
+python eval.py biolarkgsc method1.csv method2.csv method3.csv
 ```
 
 ## Fine-tuning

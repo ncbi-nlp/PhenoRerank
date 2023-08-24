@@ -1,0 +1,14 @@
+numpy==1.19.5
+scipy==1.5.4
+pandas==1.1.5
+ftfy==6.0.3
+apiclient==1.0.4
+PyYAML==5.4.1
+transformers==4.6.1
+torch==1.8.1
+scikit_learn==0.24.2
+openpyxl==3.0.7
+#nltk==3.6.2
+#spacy==3.0.6
+#pymetamap==0.1
+#clinphen==1.28
